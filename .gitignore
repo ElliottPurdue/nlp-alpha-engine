@@ -2,3 +2,11 @@ venv/
 __pycache__/
 *.pyc
 .env
+
+# SQLite database and its write-ahead log sidecars
+*.db
+*.db-wal
+*.db-shm
+
+# Scheduled task output
+pipeline.log
