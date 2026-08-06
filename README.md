@@ -17,7 +17,32 @@ A modular Python data pipeline that scrapes financial news headlines, extracts s
 * Python 3.10+
 
 ### Installation & Setup
+
 1. Clone the repository:
-   ```bash
-   git clone [https://github.com/ElliottPurdue/nlp-alpha-engine.git](https://github.com/ElliottPurdue/nlp-alpha-engine.git)
-   cd nlp-alpha-engine
+    git clone https://github.com/ElliottPurdue/nlp-alpha-engine.git
+    cd nlp-alpha-engine
+
+2. Create and activate a virtual environment:
+    python -m venv venv
+    venv\Scripts\activate
+
+3. Install required packages:
+    pip install requests beautifulsoup4 pandas lxml torch transformers yfinance xgboost scikit-learn
+
+### Running the Pipeline
+
+Step 1: Fetch raw financial headlines
+    python scraper.py
+
+Step 2: Run FinBERT sentiment analysis
+    python sentiment_analyzer.py
+
+Step 3: Merge market data & train XGBoost model
+    python alpha_engine.py
+
+---
+
+## 📊 Tech Stack
+* **Language:** Python
+* **NLP & ML:** HuggingFace Transformers, PyTorch, XGBoost, Scikit-Learn
+* **Data Processing:** Pandas, NumPy, BeautifulSoup4, YFinance
