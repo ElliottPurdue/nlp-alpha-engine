@@ -6,13 +6,52 @@ its most recent items, so execution frequency determines how much of the news
 flow is captured; anything that rotates out before a run is unrecoverable.
 """
 
+import time
+
 import requests
 from bs4 import BeautifulSoup
 
 import database as db
 
-TICKERS = ["AAPL", "MSFT", "NVDA", "TSLA", "JPM"]
+# The universe deliberately spans sectors rather than concentrating in mega-cap
+# technology. This is a cross-sectional signal, and names that all move together
+# contribute far less independent information than their row count suggests, so
+# breadth across sectors is what makes additional tickers worth collecting.
+UNIVERSE = {
+    "technology": [
+        "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "AVGO", "AMD",
+        "CRM", "ORCL", "ADBE", "CSCO", "QCOM", "TXN", "INTC",
+    ],
+    "financials": [
+        "JPM", "BAC", "WFC", "GS", "MS", "C", "BLK", "SCHW", "AXP",
+    ],
+    "healthcare": [
+        "UNH", "JNJ", "LLY", "PFE", "ABBV", "MRK", "TMO", "ABT",
+    ],
+    "consumer": [
+        "WMT", "COST", "HD", "PG", "KO", "PEP", "MCD", "NKE", "TGT",
+    ],
+    "industrials": [
+        "CAT", "BA", "GE", "UPS", "HON", "RTX",
+    ],
+    "energy": [
+        "XOM", "CVX", "COP",
+    ],
+    "communications": [
+        "DIS", "NFLX", "T", "VZ",
+    ],
+    "autos": [
+        "TSLA", "F", "GM",
+    ],
+}
+
+TICKERS = [ticker for sector in UNIVERSE.values() for ticker in sector]
+
 REQUEST_TIMEOUT = 15
+
+# Brief pause between feed requests. At this universe size, issuing every request
+# back to back is both impolite to the provider and more likely to be throttled.
+REQUEST_DELAY = 0.5
 
 # The endpoint returns 403 to clients that do not present a browser User-Agent.
 HEADERS = {
@@ -72,8 +111,13 @@ def run():
     all_news = []
     failed = []
 
-    print("Fetching news headlines...")
-    for ticker in TICKERS:
+    # Only failures are logged per ticker. At this universe size a line per feed
+    # would add well over a thousand lines a day to pipeline.log and bury the
+    # summary that actually needs reading.
+    print(f"Fetching news for {len(TICKERS)} tickers...")
+    for index, ticker in enumerate(TICKERS):
+        if index:
+            time.sleep(REQUEST_DELAY)
         try:
             items = fetch_yahoo_news(ticker)
         except requests.RequestException as exc:
@@ -82,7 +126,6 @@ def run():
             print(f"  {ticker}: FAILED ({exc})")
             failed.append(ticker)
             continue
-        print(f"  {ticker}: {len(items)} items")
         all_news.extend(items)
 
     with db.connect() as conn:
