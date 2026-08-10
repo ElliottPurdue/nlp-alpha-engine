@@ -29,6 +29,20 @@ warnings.filterwarnings("ignore")
 # model presently needs, and it leaves room for a longer backtest later.
 PRICE_PERIOD = "10y"
 
+# Long-horizon forward return, in trading sessions. Daily returns are dominated
+# by microstructure noise; a week gives any real effect room to surface.
+LONG_HORIZON = 5
+
+# Observations of a ticker's own recent history used to establish what is normal
+# for it. Rows are per-ticker news days rather than calendar days, so this spans
+# more than twenty sessions for thinly covered names.
+BASELINE_WINDOW = 20
+
+# Minimum prior observations before a baseline is considered meaningful; below
+# this the surprise columns are left NULL rather than computed from one or two
+# points.
+MIN_BASELINE = 5
+
 
 def _to_int(value):
     """Return a Python int, or None where pandas holds a missing value."""
@@ -130,6 +144,14 @@ def _load_prices(conn):
         prices["fwd_return"].isna(), np.nan,
         np.where(prices["fwd_return"] > 0, 1, 0),
     )
+
+    # The longer horizon for H2. Note that consecutive observations of this
+    # column overlap by four of their five days, so its significance tests
+    # require a correction that the one-day column does not.
+    prices["fwd_return_5d"] = (
+        prices.groupby("ticker")["close"]
+        .transform(lambda c: c.shift(-LONG_HORIZON) / c - 1)
+    )
     return prices
 
 
@@ -182,25 +204,65 @@ def rebuild_features(conn, model_name=db.FINBERT_MODEL):
                               ("volume", "volume_rank")):
         merged[rank_name] = merged.groupby("date")[source].rank(pct=True)
 
-    # Market-relative target. Over half the variance of one stock's daily return
+    # Surprise features (H1). Cross-sectional ranks say whether a stock's news is
+    # positive relative to its peers; these say whether it is unusual relative to
+    # the stock's own recent history, which is what the literature associates with
+    # returns. A quiet name receiving four articles is a far larger event than a
+    # heavily covered one receiving the same four.
+    #
+    # shift(1) before the rolling window is what keeps this causal: without it,
+    # each observation would be measured against a baseline containing itself,
+    # which is a subtle but genuine lookahead.
+    merged = merged.sort_values(["ticker", "date"])
+    by_ticker = merged.groupby("ticker")
+
+    sentiment_baseline = by_ticker["mean_sentiment"].transform(
+        lambda s: s.shift(1).rolling(BASELINE_WINDOW, min_periods=MIN_BASELINE).mean()
+    )
+    attention_baseline = by_ticker["headline_count"].transform(
+        lambda s: s.shift(1).rolling(BASELINE_WINDOW, min_periods=MIN_BASELINE).median()
+    )
+
+    merged["sentiment_surprise"] = merged["mean_sentiment"] - sentiment_baseline
+    # A log ratio rather than a difference, so that a name going from 2 to 8
+    # articles registers the same as one going from 20 to 80. The +1 keeps the
+    # ratio finite when a baseline is zero.
+    merged["attention_surprise"] = np.log(
+        (merged["headline_count"] + 1) / (attention_baseline + 1)
+    )
+
+    for source, rank_name in (("sentiment_surprise", "sentiment_surprise_rank"),
+                              ("attention_surprise", "attention_surprise_rank")):
+        merged[rank_name] = merged.groupby("date")[source].rank(pct=True)
+
+    # Market-relative targets. Over half the variance of one stock's daily return
     # is the market moving, which company-level sentiment cannot forecast.
     # Subtracting the session's cross-sectional mean leaves the portion a
     # stock-selection signal could plausibly explain.
-    merged["excess_return"] = (
-        merged["fwd_return"] - merged.groupby("date")["fwd_return"].transform("mean")
-    )
-    merged["target_relative"] = np.where(
-        merged["excess_return"].isna(), np.nan,
-        np.where(merged["excess_return"] > 0, 1, 0),
-    )
+    for source, excess_name, target_name in (
+        ("fwd_return", "excess_return", "target_relative"),
+        ("fwd_return_5d", "excess_return_5d", "target_relative_5d"),
+    ):
+        merged[excess_name] = (
+            merged[source] - merged.groupby("date")[source].transform("mean")
+        )
+        merged[target_name] = np.where(
+            merged[excess_name].isna(), np.nan,
+            np.where(merged[excess_name] > 0, 1, 0),
+        )
 
     rows = [
         (row.ticker, row.date.date().isoformat(), float(row.mean_sentiment),
          float(row.sum_sentiment), int(row.headline_count), float(row.close),
          _to_int(row.volume), _to_float(row.sentiment_rank),
          _to_float(row.headline_rank), _to_float(row.volume_rank),
+         _to_float(row.sentiment_surprise), _to_float(row.attention_surprise),
+         _to_float(row.sentiment_surprise_rank),
+         _to_float(row.attention_surprise_rank),
          _to_float(row.fwd_return), _to_float(row.excess_return),
-         _to_int(row.target), _to_int(row.target_relative))
+         _to_int(row.target), _to_int(row.target_relative),
+         _to_float(row.fwd_return_5d), _to_float(row.excess_return_5d),
+         _to_int(row.target_relative_5d))
         for row in merged.itertuples()
     ]
     return db.replace_daily_features(conn, rows)

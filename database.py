@@ -308,9 +308,12 @@ def replace_daily_features(conn, rows):
         INSERT INTO daily_features (ticker, session_date, mean_sentiment,
                                     sum_sentiment, headline_count, close, volume,
                                     sentiment_rank, headline_rank, volume_rank,
+                                    sentiment_surprise, attention_surprise,
+                                    sentiment_surprise_rank, attention_surprise_rank,
                                     fwd_return, excess_return, target,
-                                    target_relative, built_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                    target_relative, fwd_return_5d,
+                                    excess_return_5d, target_relative_5d, built_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [tuple(r) + (now,) for r in rows],
     )

@@ -24,7 +24,19 @@ import database as db
 # Rank features rather than raw ones: raw volume and headline counts differ
 # across the universe by orders of magnitude and would let the model identify the
 # ticker instead of reading the day.
-FEATURES = ["sentiment_rank", "headline_rank", "volume_rank", "mean_sentiment"]
+#
+# "level" measures a stock against its peers on the day. "surprise" measures it
+# against its own recent history. They answer different questions and are kept
+# separable so the two can be compared rather than silently blended.
+FEATURE_SETS = {
+    "level": ["sentiment_rank", "headline_rank", "volume_rank", "mean_sentiment"],
+    "surprise": ["sentiment_surprise_rank", "attention_surprise_rank",
+                 "sentiment_surprise", "attention_surprise"],
+    "combined": ["sentiment_rank", "headline_rank", "volume_rank",
+                 "sentiment_surprise_rank", "attention_surprise_rank"],
+}
+
+FEATURES = FEATURE_SETS["level"]
 TARGET = "target_relative"
 
 TEST_FRACTION = 0.2
@@ -41,24 +53,33 @@ MODEL_PERIOD_END = "2020-06-30"
 CREDIBLE_SAMPLE = 300
 
 
-def load_training_frame():
-    """Load labelled rows from the contiguous historical block, chronologically."""
+def load_training_frame(target=TARGET):
+    """Load labelled rows from the contiguous historical block, chronologically.
+
+    Args:
+        target: Label column that must be present; rows lacking it are dropped.
+            The five-day target is NULL for the last few sessions of each ticker,
+            so the usable sample differs by horizon.
+    """
     with db.connect(read_only=True) as conn:
-        return pd.read_sql_query(
+        frame = pd.read_sql_query(
             """
             SELECT ticker, session_date, mean_sentiment, sum_sentiment,
                    headline_count, close, volume,
                    sentiment_rank, headline_rank, volume_rank,
-                   fwd_return, excess_return, target, target_relative
+                   sentiment_surprise, attention_surprise,
+                   sentiment_surprise_rank, attention_surprise_rank,
+                   fwd_return, excess_return, target, target_relative,
+                   fwd_return_5d, excess_return_5d, target_relative_5d
             FROM daily_features
-            WHERE target_relative IS NOT NULL
-              AND session_date <= ?
+            WHERE session_date <= ?
             ORDER BY session_date, ticker
             """,
             conn,
             params=(MODEL_PERIOD_END,),
             parse_dates=["session_date"],
         )
+    return frame[frame[target].notna()].reset_index(drop=True)
 
 
 def build_alpha_engine():

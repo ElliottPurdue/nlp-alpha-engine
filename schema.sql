@@ -102,22 +102,36 @@ CREATE TABLE IF NOT EXISTS prices (
 -- Forward-looking columns are NULL for each ticker's most recent session, which
 -- has no subsequent close. Those rows are retained for display and excluded at
 -- training time.
+-- Surprise columns express each observation against the ticker's OWN trailing
+-- baseline rather than against its peers, because what the literature associates
+-- with returns is news unusual for that stock, not news positive in absolute
+-- terms. Baselines are computed from strictly prior observations.
+--
+-- The five-day horizon exists to test whether a one-day window is simply too
+-- short for any effect to surface above microstructure noise.
 CREATE TABLE IF NOT EXISTS daily_features (
-    ticker          TEXT NOT NULL,
-    session_date    TEXT NOT NULL,
-    mean_sentiment  REAL NOT NULL,
-    sum_sentiment   REAL NOT NULL,
-    headline_count  INTEGER NOT NULL,
-    close           REAL NOT NULL,
-    volume          INTEGER,
-    sentiment_rank  REAL,       -- within-session percentile, 0..1
-    headline_rank   REAL,
-    volume_rank     REAL,
-    fwd_return      REAL,       -- close(D+1) / close(D) - 1
-    excess_return   REAL,       -- fwd_return less the session's cross-sectional mean
-    target          INTEGER,    -- 1 if fwd_return > 0
-    target_relative INTEGER,    -- 1 if excess_return > 0
-    built_at        TEXT NOT NULL,
+    ticker                  TEXT NOT NULL,
+    session_date            TEXT NOT NULL,
+    mean_sentiment          REAL NOT NULL,
+    sum_sentiment           REAL NOT NULL,
+    headline_count          INTEGER NOT NULL,
+    close                   REAL NOT NULL,
+    volume                  INTEGER,
+    sentiment_rank          REAL,   -- within-session percentile, 0..1
+    headline_rank           REAL,
+    volume_rank             REAL,
+    sentiment_surprise      REAL,   -- mean_sentiment less the ticker's trailing mean
+    attention_surprise      REAL,   -- log ratio of headline_count to trailing median
+    sentiment_surprise_rank REAL,   -- the two above, ranked within the session
+    attention_surprise_rank REAL,
+    fwd_return              REAL,   -- close(D+1) / close(D) - 1
+    excess_return           REAL,   -- fwd_return less the session's cross-sectional mean
+    target                  INTEGER,-- 1 if fwd_return > 0
+    target_relative         INTEGER,-- 1 if excess_return > 0
+    fwd_return_5d           REAL,   -- close(D+5) / close(D) - 1
+    excess_return_5d        REAL,
+    target_relative_5d      INTEGER,
+    built_at                TEXT NOT NULL,
     PRIMARY KEY (ticker, session_date)
 ) STRICT, WITHOUT ROWID;
 
