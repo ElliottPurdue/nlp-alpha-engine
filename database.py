@@ -306,9 +306,11 @@ def replace_daily_features(conn, rows):
     conn.executemany(
         """
         INSERT INTO daily_features (ticker, session_date, mean_sentiment,
-                                    sum_sentiment, headline_count, close,
-                                    volume, fwd_return, target, built_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                    sum_sentiment, headline_count, close, volume,
+                                    sentiment_rank, headline_rank, volume_rank,
+                                    fwd_return, excess_return, target,
+                                    target_relative, built_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [tuple(r) + (now,) for r in rows],
     )

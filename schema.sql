@@ -90,20 +90,34 @@ CREATE TABLE IF NOT EXISTS prices (
 
 -- Model-ready feature matrix, regenerated in full by the feature build.
 --
--- fwd_return and target are NULL for each ticker's most recent session, which
--- has no subsequent close. Those rows are retained so that current sentiment
--- remains available for display, and are excluded at training time.
+-- Raw and cross-sectionally normalized features are stored side by side. Raw
+-- values are retained for display; the rank columns are what the model consumes,
+-- since raw volume and headline counts differ across the universe by orders of
+-- magnitude and encode company size rather than daily information.
+--
+-- Both an absolute and a market-relative target are stored. Roughly half the
+-- variance of a single stock's daily return is the market itself, which
+-- company-level sentiment cannot forecast; excess_return removes it.
+--
+-- Forward-looking columns are NULL for each ticker's most recent session, which
+-- has no subsequent close. Those rows are retained for display and excluded at
+-- training time.
 CREATE TABLE IF NOT EXISTS daily_features (
-    ticker         TEXT NOT NULL,
-    session_date   TEXT NOT NULL,
-    mean_sentiment REAL NOT NULL,
-    sum_sentiment  REAL NOT NULL,
-    headline_count INTEGER NOT NULL,
-    close          REAL NOT NULL,
-    volume         INTEGER,
-    fwd_return     REAL,       -- close(D+1) / close(D) - 1
-    target         INTEGER,    -- 1 if fwd_return > 0, else 0
-    built_at       TEXT NOT NULL,
+    ticker          TEXT NOT NULL,
+    session_date    TEXT NOT NULL,
+    mean_sentiment  REAL NOT NULL,
+    sum_sentiment   REAL NOT NULL,
+    headline_count  INTEGER NOT NULL,
+    close           REAL NOT NULL,
+    volume          INTEGER,
+    sentiment_rank  REAL,       -- within-session percentile, 0..1
+    headline_rank   REAL,
+    volume_rank     REAL,
+    fwd_return      REAL,       -- close(D+1) / close(D) - 1
+    excess_return   REAL,       -- fwd_return less the session's cross-sectional mean
+    target          INTEGER,    -- 1 if fwd_return > 0
+    target_relative INTEGER,    -- 1 if excess_return > 0
+    built_at        TEXT NOT NULL,
     PRIMARY KEY (ticker, session_date)
 ) STRICT, WITHOUT ROWID;
 

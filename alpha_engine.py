@@ -1,12 +1,18 @@
-"""Pipeline stage 4: train and evaluate the directional classifier.
+"""Pipeline stage 4: train and evaluate the cross-sectional classifier.
 
-Reads daily_features, where calendar alignment, sentiment aggregation and label
-construction have already happened. This module is concerned only with fitting
-and evaluating.
+Reads daily_features, where calendar alignment, sentiment aggregation, feature
+normalization and label construction have already happened. This module is
+concerned only with fitting and evaluating.
 
-Evaluation reports the majority-class baseline alongside model accuracy. In a
-rising market the up-day share sits well above 50%, and an accuracy figure
-quoted without that reference point is uninterpretable.
+The question posed is deliberately relative rather than directional: given a
+trading session, which names outperform the cross-section? Roughly half the
+variance of an individual daily return is the market moving, and company-level
+news sentiment cannot forecast that component, so asking for absolute direction
+buries whatever stock-selection signal exists under noise the features could
+never explain.
+
+Evaluation reports the majority-class baseline alongside accuracy. An accuracy
+figure quoted without that reference point is uninterpretable.
 """
 
 import pandas as pd
@@ -15,26 +21,42 @@ from xgboost import XGBClassifier
 
 import database as db
 
-FEATURES = ["mean_sentiment", "sum_sentiment", "headline_count", "volume"]
+# Rank features rather than raw ones: raw volume and headline counts differ
+# across the universe by orders of magnitude and would let the model identify the
+# ticker instead of reading the day.
+FEATURES = ["sentiment_rank", "headline_rank", "volume_rank", "mean_sentiment"]
+TARGET = "target_relative"
+
 TEST_FRACTION = 0.2
 
-# Below this many labelled rows, evaluation is dominated by sampling noise and
-# is reported only to confirm the pipeline runs end to end.
+# The backfilled corpus ends mid-2020 and live collection began in 2026, leaving
+# a six-year gap. Fitting across it would train on one era and test on another
+# with nothing joining them, so the contiguous historical block is used for
+# development and the live period is held back entirely as an untouched forward
+# test.
+MODEL_PERIOD_END = "2020-06-30"
+
+# Below this many labelled rows, evaluation is dominated by sampling noise and is
+# reported only to confirm the pipeline runs end to end.
 CREDIBLE_SAMPLE = 300
 
 
 def load_training_frame():
-    """Load labelled rows from daily_features in chronological order."""
+    """Load labelled rows from the contiguous historical block, chronologically."""
     with db.connect(read_only=True) as conn:
         return pd.read_sql_query(
             """
             SELECT ticker, session_date, mean_sentiment, sum_sentiment,
-                   headline_count, close, volume, fwd_return, target
+                   headline_count, close, volume,
+                   sentiment_rank, headline_rank, volume_rank,
+                   fwd_return, excess_return, target, target_relative
             FROM daily_features
-            WHERE target IS NOT NULL
+            WHERE target_relative IS NOT NULL
+              AND session_date <= ?
             ORDER BY session_date, ticker
             """,
             conn,
+            params=(MODEL_PERIOD_END,),
             parse_dates=["session_date"],
         )
 
@@ -47,51 +69,52 @@ def build_alpha_engine():
         print("No labelled rows. Run build_features.py first.")
         return
 
-    up_share = frame["target"].mean()
-    baseline = max(up_share, 1 - up_share)
+    outperform_share = frame[TARGET].mean()
+    baseline = max(outperform_share, 1 - outperform_share)
 
-    print(f"Loaded {len(frame)} labelled ticker-days "
+    print(f"Loaded {len(frame):,} labelled ticker-days "
           f"across {frame['session_date'].nunique()} sessions "
-          f"and {frame['ticker'].nunique()} tickers.")
-    print(f"  up-days {up_share:.1%}  ->  majority-class baseline {baseline:.1%}")
+          f"and {frame['ticker'].nunique()} tickers "
+          f"(through {MODEL_PERIOD_END}).")
+    print(f"  outperformers {outperform_share:.1%}  ->  "
+          f"majority-class baseline {baseline:.1%}")
 
     if len(frame) < CREDIBLE_SAMPLE:
         print(f"\n  NOTE: fewer than {CREDIBLE_SAMPLE} labelled rows. The metrics")
         print("  below confirm the pipeline runs; they are not evidence of skill.")
 
-    # Split on a session boundary rather than a row index. Rows from one trading
-    # day share market-wide information, so splitting inside a day would leak it
-    # across the boundary. A shuffled split would be worse still: it trains on
-    # later sessions to predict earlier ones.
-    sessions = frame["session_date"].drop_duplicates().sort_values()
-    if len(sessions) < 3:
-        print("\nNeed at least three distinct sessions to form a split.")
+    # Split on a session boundary chosen by cumulative row count, not by session
+    # count. Sessions differ in size by more than an order of magnitude while
+    # collection ramps up, so taking a fixed fraction of sessions would put a
+    # wildly different fraction of rows on each side. Splitting inside a session
+    # would also leak that day's market-wide information across the boundary.
+    cumulative = frame.groupby("session_date").size().sort_index().cumsum()
+    eligible = cumulative[cumulative <= len(frame) * (1 - TEST_FRACTION)]
+
+    if eligible.empty or len(eligible) == len(cumulative):
+        print("\nSessions are too unevenly sized to form a clean split.")
         return
 
-    cutoff = sessions.iloc[int(len(sessions) * (1 - TEST_FRACTION))]
+    cutoff = cumulative.index[len(eligible)]
     train = frame[frame["session_date"] < cutoff]
     test = frame[frame["session_date"] >= cutoff]
 
-    if train.empty or test.empty:
-        print("\nSplit produced an empty side; more sessions are needed.")
-        return
-
-    print(f"\n  train {len(train):>4} rows, through {train['session_date'].max().date()}")
-    print(f"  test  {len(test):>4} rows, from    {test['session_date'].min().date()}")
+    print(f"\n  train {len(train):>6,} rows, through {train['session_date'].max().date()}")
+    print(f"  test  {len(test):>6,} rows, from    {test['session_date'].min().date()}")
 
     model = XGBClassifier(eval_metric="logloss", max_depth=3, learning_rate=0.1)
-    model.fit(train[FEATURES], train["target"])
+    model.fit(train[FEATURES], train[TARGET])
     predictions = model.predict(test[FEATURES])
 
-    accuracy = accuracy_score(test["target"], predictions)
-    test_share = test["target"].mean()
+    accuracy = accuracy_score(test[TARGET], predictions)
+    test_share = test[TARGET].mean()
     test_baseline = max(test_share, 1 - test_share)
 
     print("\n--- Evaluation ---")
-    print(f"  model accuracy     {accuracy:.1%}")
-    print(f"  baseline (majority){test_baseline:>8.1%}")
-    print(f"  edge over baseline {accuracy - test_baseline:+.1%}")
-    print("\n" + classification_report(test["target"], predictions, zero_division=0))
+    print(f"  model accuracy      {accuracy:>7.1%}")
+    print(f"  baseline (majority) {test_baseline:>7.1%}")
+    print(f"  edge over baseline  {accuracy - test_baseline:>+7.1%}")
+    print("\n" + classification_report(test[TARGET], predictions, zero_division=0))
 
     print("Feature importance:")
     for name, weight in sorted(zip(FEATURES, model.feature_importances_),

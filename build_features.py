@@ -173,10 +173,34 @@ def rebuild_features(conn, model_name=db.FINBERT_MODEL):
 
     merged = daily.merge(prices, on=["ticker", "date"], how="inner")
 
+    # Cross-sectional normalization. Raw volume spans nearly three orders of
+    # magnitude across the universe and headline counts vary by more than 40x, so
+    # the raw values identify the company rather than describe the day. A
+    # within-session percentile rank makes them comparable across tickers.
+    for source, rank_name in (("mean_sentiment", "sentiment_rank"),
+                              ("headline_count", "headline_rank"),
+                              ("volume", "volume_rank")):
+        merged[rank_name] = merged.groupby("date")[source].rank(pct=True)
+
+    # Market-relative target. Over half the variance of one stock's daily return
+    # is the market moving, which company-level sentiment cannot forecast.
+    # Subtracting the session's cross-sectional mean leaves the portion a
+    # stock-selection signal could plausibly explain.
+    merged["excess_return"] = (
+        merged["fwd_return"] - merged.groupby("date")["fwd_return"].transform("mean")
+    )
+    merged["target_relative"] = np.where(
+        merged["excess_return"].isna(), np.nan,
+        np.where(merged["excess_return"] > 0, 1, 0),
+    )
+
     rows = [
         (row.ticker, row.date.date().isoformat(), float(row.mean_sentiment),
          float(row.sum_sentiment), int(row.headline_count), float(row.close),
-         _to_int(row.volume), _to_float(row.fwd_return), _to_int(row.target))
+         _to_int(row.volume), _to_float(row.sentiment_rank),
+         _to_float(row.headline_rank), _to_float(row.volume_rank),
+         _to_float(row.fwd_return), _to_float(row.excess_return),
+         _to_int(row.target), _to_int(row.target_relative))
         for row in merged.itertuples()
     ]
     return db.replace_daily_features(conn, rows)
