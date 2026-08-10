@@ -53,6 +53,11 @@ REQUEST_TIMEOUT = 15
 # back to back is both impolite to the provider and more likely to be throttled.
 REQUEST_DELAY = 0.5
 
+# Progress is reported every this many feeds. A full pass takes roughly ninety
+# seconds, and without periodic output an interactive run is indistinguishable
+# from a hung one.
+PROGRESS_EVERY = 10
+
 # The endpoint returns 403 to clients that do not present a browser User-Agent.
 HEADERS = {
     "User-Agent": (
@@ -111,22 +116,25 @@ def run():
     all_news = []
     failed = []
 
-    # Only failures are logged per ticker. At this universe size a line per feed
+    # Individual successes are not logged: at this universe size a line per feed
     # would add well over a thousand lines a day to pipeline.log and bury the
-    # summary that actually needs reading.
+    # summary. Failures and a periodic counter are logged instead.
     print(f"Fetching news for {len(TICKERS)} tickers...")
     for index, ticker in enumerate(TICKERS):
         if index:
             time.sleep(REQUEST_DELAY)
+
         try:
-            items = fetch_yahoo_news(ticker)
+            all_news.extend(fetch_yahoo_news(ticker))
         except requests.RequestException as exc:
             # Failures are isolated per feed so that one unavailable ticker does
             # not abort a scheduled run.
             print(f"  {ticker}: FAILED ({exc})")
             failed.append(ticker)
-            continue
-        all_news.extend(items)
+
+        completed = index + 1
+        if completed % PROGRESS_EVERY == 0 or completed == len(TICKERS):
+            print(f"  {completed}/{len(TICKERS)} feeds | {len(all_news)} items collected")
 
     with db.connect() as conn:
         db.init_db(conn)
