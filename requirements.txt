@@ -1,0 +1,28 @@
+# Pinned to the versions this project was developed and tested against.
+# Install with:  pip install -r requirements.txt
+
+# News collection
+requests==2.34.2
+beautifulsoup4==4.15.0
+lxml==6.1.1              # XML parser BeautifulSoup uses for RSS
+
+# Data handling
+pandas==3.0.5
+numpy==2.5.1
+
+# Sentiment scoring. The CPU build of torch is sufficient: FinBERT inference on
+# headlines runs at roughly 10 per second, which clears a full backfill overnight.
+torch==2.13.0
+transformers==5.14.1
+
+# Market data
+yfinance==1.5.2
+
+# Modelling
+xgboost==3.4.0
+scikit-learn==1.9.0
+
+# Reporting and dashboard
+matplotlib==3.11.1
+streamlit==1.61.1
+altair==6.2.2            # bundled with streamlit; pinned for the dual-axis chart
