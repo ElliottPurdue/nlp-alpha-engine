@@ -15,6 +15,11 @@ import database as db
 
 BATCH_SIZE = 32
 
+# Scores are committed in groups of roughly this size. A backfill pass runs for
+# around an hour, so buffering everything to the end would mean an interruption
+# discarded all of it. Committing periodically caps the loss at one group and
+# makes the pass stoppable and resumable.
+COMMIT_EVERY = 320
 # FinBERT's context window. Headlines fall well short of it, but truncating
 # guards against an unusually long title raising mid-batch.
 MAX_TOKENS = 512
@@ -46,37 +51,38 @@ def analyze_sentiment(model_name=db.FINBERT_MODEL):
         print(f"Loading {model_name} (the first run downloads the weights)...")
         classifier = pipeline("sentiment-analysis", model=model_name)
 
-        scored = []
-        for batch_index, start in enumerate(range(0, len(pending), BATCH_SIZE)):
+        distribution = {}
+        buffer = []
+        completed = 0
+
+        for start in range(0, len(pending), BATCH_SIZE):
             batch = pending[start:start + BATCH_SIZE]
             results = classifier(
                 [row["headline"] for row in batch],
                 truncation=True,
                 max_length=MAX_TOKENS,
             )
-            scored.extend(
-                (row["article_id"], res["label"], res["score"])
-                for row, res in zip(batch, results)
-            )
-            if batch_index % PROGRESS_EVERY == 0 or len(scored) == len(pending):
-                print(f"  scored {len(scored)}/{len(pending)}")
 
-        # A single upsert inside the caller's transaction: either every score
-        # from this pass lands or none does, so an interrupted run leaves no
-        # partially scored batch behind.
-        count = db.upsert_sentiment(conn, scored, model_name)
+            for row, result in zip(batch, results):
+                buffer.append((row["article_id"], result["label"], result["score"]))
+                label = result["label"].lower()
+                distribution[label] = distribution.get(label, 0) + 1
 
-        distribution = {}
-        for _, label, _ in scored:
-            key = label.lower()
-            distribution[key] = distribution.get(key, 0) + 1
+            if len(buffer) >= COMMIT_EVERY or start + BATCH_SIZE >= len(pending):
+                db.upsert_sentiment(conn, buffer, model_name)
+                # Committed mid-pass so an interrupted run keeps its work; the
+                # anti-join then resumes from exactly where it stopped.
+                conn.commit()
+                completed += len(buffer)
+                buffer = []
+                print(f"  scored {completed:,}/{len(pending):,}")
 
-    print(f"\nScored {count} headlines:")
+    print(f"\nScored {completed:,} headlines:")
     for label in ("positive", "neutral", "negative"):
-        share = distribution.get(label, 0) / count if count else 0
-        print(f"  {label:<9} {distribution.get(label, 0):>5}  ({share:.1%})")
+        share = distribution.get(label, 0) / completed if completed else 0
+        print(f"  {label:<9} {distribution.get(label, 0):>7,}  ({share:.1%})")
 
-    return count
+    return completed
 
 
 if __name__ == "__main__":

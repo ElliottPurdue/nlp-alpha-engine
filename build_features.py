@@ -27,7 +27,7 @@ warnings.filterwarnings("ignore")
 # Deeper than current sentiment history can use. Price history is fully
 # backfillable at any time, so there is no cost to storing more of it than the
 # model presently needs, and it leaves room for a longer backtest later.
-PRICE_PERIOD = "2y"
+PRICE_PERIOD = "10y"
 
 
 def _to_int(value):
