@@ -82,9 +82,13 @@ is reported regardless of outcome.
   the literature, and magnitude is far more forecastable than sign.
 - **H4 — sentiment is contemporaneous.** If a headline describes a move that has
   already happened, it cannot forecast the next one — which would explain H0–H2.
+- **H5 — a model trained on returns beats one trained on tone.** FinBERT optimises
+  for sentiment, which H4 shows is contemporaneous. Training directly on the label
+  that is actually wanted should do better, if anything is there.
 
 H1 and H2 are tested by `experiments.py` as classifier configurations. H3 and H4 are
-direct correlation tests in `relationships.py`, since neither needs a model.
+direct correlation tests in `relationships.py`, since neither needs a model. H5 is
+`text_model.py`, evaluated through the same walk-forward harness.
 
 | Configuration | Rows | Accuracy | Edge vs baseline | Mean IC | IC sessions | t |
 |---|---|---|---|---|---|---|
@@ -107,8 +111,10 @@ consecutive five-day returns share four of their five days, so an uncorrected
 t-statistic would substantially overstate significance. H2 did not fail so much as
 lack the power to succeed.
 
-Testing stopped at five configurations. Continuing until something cleared the
-threshold would have produced a number, not a finding.
+Testing stopped at five classifier configurations. Continuing until something
+cleared the threshold would have produced a number, not a finding. H3 to H5 below
+ask different questions, each stated in advance and each reported with the control
+that bounds it.
 
 ### H3 and H4, with controls
 
@@ -134,6 +140,38 @@ This is the same trap caught earlier in the project, when raw `volume` and
 feature that encodes stock identity will look predictive of anything that varies by
 stock.
 
+### H5, a model trained on this project's own data
+
+FinBERT optimises for tone. H4 shows tone is contemporaneous, so `text_model.py`
+skips the intermediate step: TF-IDF over headline text into a linear classifier,
+trained directly on whether the name beat the cross-section next session, evaluated
+through the same walk-forward harness.
+
+A linear model rather than a fine-tuned transformer, deliberately. At 43k short
+headlines carrying a signal four prior tests could not detect, 66M parameters would
+memorise the training set — and the token weights below are inspectable in a way
+transformer weights are not.
+
+```
+FinBERT sentiment (H0)                  IC -0.0146   t -1.33
+TF-IDF on returns (H5), raw             IC +0.0231   t +1.90
+TF-IDF on returns (H5), controlled      IC +0.0096   t +0.83
+
+share of score variance fixed per ticker:  13.7%
+```
+
+The raw figure looks like an improvement and mostly is not. Headlines name the
+company they are about, so a bag-of-words model can learn *Tesla* and score every
+Tesla headline alike. The heaviest weights confirm it — `tesla +0.62`,
+`ford −0.74`, `oracle +0.47` — and demeaning each ticker's scores removes more than
+half the edge. Neither figure is significant; the controlled one is not close.
+
+**This is the third distinct form the same failure took.** Raw volume let the
+classifier identify tickers; coverage predicted volatility between stocks but not
+within them; company names do it again through text. In a cross-section, any
+feature varying more between names than within them will look predictive of
+anything else that also varies between names.
+
 ---
 
 ## 🏗️ Architecture
@@ -146,6 +184,7 @@ build_features.py      yfinance ──────────▶ prices;  joine
 walkforward.py         daily_features ────▶ out-of-sample predictions
 experiments.py         H0-H2: can a classifier predict direction?
 relationships.py       H3-H4: what does the same data relate to?
+text_model.py          H5: TF-IDF model trained on returns, not tone
 backtest.py            predictions ───────▶ equity curve, cost analysis
 app.py                 Streamlit dashboard
 ```
@@ -163,6 +202,7 @@ individually re-runnable. A stage that fails halfway leaves no partial state.
 | Model & evaluation | `alpha_engine.py`, `walkforward.py` | ✅ |
 | Direction tests (H0-H2) | `experiments.py` | ✅ 5 configurations |
 | Relationship tests (H3-H4) | `relationships.py` | ✅ with controls |
+| Own model (H5) | `text_model.py` | ✅ TF-IDF on returns |
 | Backtest | `backtest.py` | ✅ |
 | Dashboard | `app.py` | ✅ |
 
@@ -288,6 +328,7 @@ python build_features.py       # ingest prices, rebuild the feature matrix
 python walkforward.py          # walk-forward evaluation
 python experiments.py          # H0-H2: direction, pre-registered
 python relationships.py        # H3-H4: volatility and contemporaneity
+python text_model.py           # H5: own model, trained on returns
 python backtest.py             # equity curve and cost analysis
 python inspect_db.py           # summary of database contents
 ```

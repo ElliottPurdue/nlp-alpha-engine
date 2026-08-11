@@ -478,6 +478,35 @@ def render_research():
     )
 
     st.divider()
+    st.subheader("A model trained on this project's own data")
+    st.markdown(
+        """
+        FinBERT is trained to recognise tone, and H4 shows tone is contemporaneous.
+        **H5** skips that step: TF-IDF over headline text into a linear classifier,
+        trained directly on whether the name beat the cross-section next session,
+        run through the same walk-forward harness.
+
+        | Model | Mean IC | t |
+        |---|---|---|
+        | FinBERT sentiment (H0) | −0.0146 | −1.33 |
+        | TF-IDF on returns (H5), raw | +0.0231 | +1.90 |
+        | TF-IDF on returns (H5), controlled | +0.0096 | +0.83 |
+
+        The raw figure looks like an improvement and mostly is not. Headlines name
+        the company they describe, so a bag-of-words model can learn *Tesla* and
+        score every Tesla headline alike — the heaviest weights are
+        `tesla +0.62`, `ford −0.74`, `oracle +0.47`. **13.7%** of the score is a
+        fixed offset per ticker, and demeaning it removes over half the edge.
+        Neither figure is significant.
+
+        That is the third form the same failure took here: raw volume, then
+        coverage, now company names. In a cross-section, a feature that varies more
+        *between* names than *within* them will look predictive of anything else
+        that also varies between names.
+        """
+    )
+
+    st.divider()
     st.subheader("Why the backtest is more misleading than the IC")
     curve = Path(__file__).resolve().parent / "equity_curve.png"
     if curve.exists():
