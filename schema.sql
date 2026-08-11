@@ -1,48 +1,32 @@
 -- Schema for the NLP alpha engine.
 --
--- The tables form two layers:
+-- raw_news, news_tickers, sentiment_scores and prices are source of truth: they
+-- are only ever appended to or upserted. RSS feeds expose a short rolling window,
+-- so anything lost there is gone. daily_features is derived and rebuilt whole.
 --
---   Source of truth (raw_news, news_tickers, sentiment_scores, prices)
---       Written only through idempotent upserts and never rebuilt. RSS feeds
---       expose a short rolling window of articles, so a record lost here cannot
---       be recovered from upstream.
+-- Dates are ISO-8601 TEXT. SQLite has no date type, and ISO-8601 sorts
+-- lexicographically, so BETWEEN and ORDER BY work on the raw strings.
 --
---   Derived (daily_features)
---       Dropped and regenerated from the source tables on every feature build.
---
--- Conventions:
---
---   Dates and timestamps are stored as ISO-8601 TEXT. SQLite has no native date
---   type, and ISO-8601 orders lexicographically, so range predicates and ORDER BY
---   behave correctly on plain strings.
---
---   All tables are STRICT, which rejects values whose type does not match the
---   column declaration. STRICT does not catch NaN: SQLite has no NaN
---   representation and coerces it to NULL before type checking. NOT NULL is the
---   constraint that rejects a missing numeric value, which is why `close` is
---   NOT NULL while `volume`, where a gap is tolerable, is not.
+-- Tables are STRICT. One gap: SQLite has no NaN and coerces it to NULL before
+-- type checking, so NOT NULL rather than STRICT is what rejects a missing number.
+-- Hence `close` is NOT NULL and `volume`, where a gap is survivable, is not.
 
 
--- Unique articles, deduplicated on a hash of the canonicalized URL.
---
--- Rows are immutable apart from last_seen_at: re-scraping an article still
--- present in the feed refreshes that column and nothing else.
+-- Immutable except for last_seen_at, which each re-scrape refreshes.
 CREATE TABLE IF NOT EXISTS raw_news (
     article_id     INTEGER PRIMARY KEY,
     url_hash       TEXT NOT NULL UNIQUE,   -- SHA-256 of scheme + host + path
-    url            TEXT NOT NULL,          -- original link, unmodified
+    url            TEXT NOT NULL,
     headline       TEXT NOT NULL,
     source         TEXT NOT NULL,          -- publisher host
-    published_at   TEXT NOT NULL,          -- ISO-8601 UTC, as reported by the feed
-    session_date   TEXT NOT NULL,          -- trading session derived from published_at
+    published_at   TEXT NOT NULL,          -- ISO-8601 UTC, as the feed reported it
+    session_date   TEXT NOT NULL,          -- trading session, derived from published_at
     first_seen_at  TEXT NOT NULL,
     last_seen_at   TEXT NOT NULL
 ) STRICT;
 
 
--- Associates articles with the ticker feeds that carried them. An article
--- syndicated across several feeds has one row in raw_news and one row here per
--- ticker.
+-- Syndicated articles appear once in raw_news and once here per ticker feed.
 CREATE TABLE IF NOT EXISTS news_tickers (
     article_id INTEGER NOT NULL REFERENCES raw_news(article_id) ON DELETE CASCADE,
     ticker     TEXT    NOT NULL,
@@ -50,12 +34,9 @@ CREATE TABLE IF NOT EXISTS news_tickers (
 ) STRICT, WITHOUT ROWID;
 
 
--- Classifier output, keyed by model so that scores from different models
--- coexist rather than overwrite one another.
---
--- net_sentiment is a generated column: the mapping from label and confidence to
--- a signed magnitude is defined once, here, so every consumer of the data
--- resolves it identically.
+-- Keyed by model so a second classifier adds scores instead of overwriting.
+-- net_sentiment is generated, which keeps the label-to-magnitude mapping in one
+-- place: the model, the backtest and the dashboard cannot disagree about it.
 CREATE TABLE IF NOT EXISTS sentiment_scores (
     article_id      INTEGER NOT NULL REFERENCES raw_news(article_id) ON DELETE CASCADE,
     model_name      TEXT NOT NULL,
@@ -73,12 +54,11 @@ CREATE TABLE IF NOT EXISTS sentiment_scores (
 ) STRICT, WITHOUT ROWID;
 
 
--- Daily OHLCV bars. Upserted rather than insert-ignored, because vendors restate
--- historical values following splits and dividends and the later value
--- supersedes the earlier one.
+-- Upserted, not insert-ignored: vendors restate history after splits and
+-- dividends, and the later value is the correct one.
 CREATE TABLE IF NOT EXISTS prices (
     ticker TEXT NOT NULL,
-    date   TEXT NOT NULL,   -- YYYY-MM-DD, exchange-local trading date
+    date   TEXT NOT NULL,   -- YYYY-MM-DD, exchange-local
     open   REAL,
     high   REAL,
     low    REAL,
@@ -88,27 +68,16 @@ CREATE TABLE IF NOT EXISTS prices (
 ) STRICT, WITHOUT ROWID;
 
 
--- Model-ready feature matrix, regenerated in full by the feature build.
+-- Rebuilt in full by build_features.py.
 --
--- Raw and cross-sectionally normalized features are stored side by side. Raw
--- values are retained for display; the rank columns are what the model consumes,
--- since raw volume and headline counts differ across the universe by orders of
--- magnitude and encode company size rather than daily information.
+-- The *_rank columns are what the model consumes. Raw volume spans 799x across
+-- this universe, so raw values identify the company rather than describe the day.
 --
--- Both an absolute and a market-relative target are stored. Roughly half the
--- variance of a single stock's daily return is the market itself, which
--- company-level sentiment cannot forecast; excess_return removes it.
+-- The *_surprise columns compare an observation against the ticker's own trailing
+-- baseline instead of against its peers, built from strictly prior observations.
 --
--- Forward-looking columns are NULL for each ticker's most recent session, which
--- has no subsequent close. Those rows are retained for display and excluded at
--- training time.
--- Surprise columns express each observation against the ticker's OWN trailing
--- baseline rather than against its peers, because what the literature associates
--- with returns is news unusual for that stock, not news positive in absolute
--- terms. Baselines are computed from strictly prior observations.
---
--- The five-day horizon exists to test whether a one-day window is simply too
--- short for any effect to surface above microstructure noise.
+-- Forward-looking columns are NULL on each ticker's most recent session, which has
+-- no subsequent close. Those rows stay for display and are dropped at train time.
 CREATE TABLE IF NOT EXISTS daily_features (
     ticker                  TEXT NOT NULL,
     session_date            TEXT NOT NULL,
@@ -120,15 +89,15 @@ CREATE TABLE IF NOT EXISTS daily_features (
     sentiment_rank          REAL,   -- within-session percentile, 0..1
     headline_rank           REAL,
     volume_rank             REAL,
-    sentiment_surprise      REAL,   -- mean_sentiment less the ticker's trailing mean
-    attention_surprise      REAL,   -- log ratio of headline_count to trailing median
-    sentiment_surprise_rank REAL,   -- the two above, ranked within the session
+    sentiment_surprise      REAL,   -- less the ticker's trailing mean
+    attention_surprise      REAL,   -- log ratio to the ticker's trailing median
+    sentiment_surprise_rank REAL,
     attention_surprise_rank REAL,
     fwd_return              REAL,   -- close(D+1) / close(D) - 1
-    excess_return           REAL,   -- fwd_return less the session's cross-sectional mean
-    target                  INTEGER,-- 1 if fwd_return > 0
-    target_relative         INTEGER,-- 1 if excess_return > 0
-    fwd_return_5d           REAL,   -- close(D+5) / close(D) - 1
+    excess_return           REAL,   -- fwd_return less the session's mean
+    target                  INTEGER,
+    target_relative         INTEGER,
+    fwd_return_5d           REAL,
     excess_return_5d        REAL,
     target_relative_5d      INTEGER,
     built_at                TEXT NOT NULL,
@@ -136,18 +105,13 @@ CREATE TABLE IF NOT EXISTS daily_features (
 ) STRICT, WITHOUT ROWID;
 
 
--- session_date drives feature builds and dashboard date filters; published_at
--- drives recency ordering; ticker drives every per-symbol query.
 CREATE INDEX IF NOT EXISTS idx_raw_news_session   ON raw_news(session_date);
 CREATE INDEX IF NOT EXISTS idx_raw_news_published ON raw_news(published_at);
 CREATE INDEX IF NOT EXISTS idx_news_tickers_tkr   ON news_tickers(ticker);
 
 
--- Denormalized headline feed for presentation layers.
---
--- LEFT JOIN on sentiment_scores so that articles collected but not yet scored
--- still appear, with NULL sentiment, rather than being filtered out between
--- pipeline stages.
+-- Flattened feed for the dashboard. LEFT JOIN on scores so an article that has
+-- been collected but not yet scored still shows up.
 CREATE VIEW IF NOT EXISTS v_scored_headlines AS
 SELECT n.article_id,
        t.ticker,

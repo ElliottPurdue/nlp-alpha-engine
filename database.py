@@ -1,8 +1,7 @@
-"""SQLite persistence layer for the NLP alpha engine.
+"""SQLite persistence layer.
 
-All writes are idempotent upserts, so any pipeline stage may be re-run -- after a
-failure, by a scheduler, or manually -- without duplicating existing rows. Table
-definitions live in schema.sql.
+Every write is an idempotent upsert, so any stage can be re-run without
+duplicating rows. Tables are defined in schema.sql.
 """
 
 import hashlib
@@ -14,9 +13,8 @@ from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 
-# Resolved relative to this module rather than the working directory, so that
-# scheduled tasks and the dashboard locate the database regardless of where they
-# are launched from.
+# Relative to this file, not the working directory, so scheduled tasks and the
+# dashboard find the database wherever they are launched from.
 PROJECT_DIR = Path(__file__).resolve().parent
 DB_PATH = PROJECT_DIR / "alpha_engine.db"
 SCHEMA_PATH = PROJECT_DIR / "schema.sql"
@@ -26,27 +24,17 @@ FINBERT_MODEL = "ProsusAI/finbert"
 EXCHANGE_TZ = ZoneInfo("America/New_York")
 MARKET_CLOSE = time(16, 0)
 
-# SQLite caps the number of bound parameters in a single statement. Lookups are
-# chunked well below the limit.
+# SQLite caps bound parameters per statement; chunk lookups below the limit.
 _PARAM_CHUNK = 900
 
 
 # --------------------------------------------------------------------------
-# Connection handling
+# Connections
 # --------------------------------------------------------------------------
 
 @contextmanager
 def connect(db_path=DB_PATH, read_only=False):
-    """Yield a configured connection, committing on success and rolling back on error.
-
-    Args:
-        db_path: Path to the SQLite database file.
-        read_only: Open the database read-only, suppressing commit, rollback and
-            the write-oriented pragmas.
-
-    Yields:
-        A sqlite3.Connection whose rows support access by column name.
-    """
+    """Commit on clean exit, roll back on exception, always close."""
     if read_only:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     else:
@@ -54,14 +42,11 @@ def connect(db_path=DB_PATH, read_only=False):
 
     conn.row_factory = sqlite3.Row
 
-    # Foreign key enforcement defaults to off and is configured per connection,
-    # so it must be set here rather than in the schema.
+    # Off by default, and per connection, so it cannot live in the schema.
     conn.execute("PRAGMA foreign_keys = ON")
 
     if not read_only:
-        # Write-ahead logging admits concurrent readers alongside a single
-        # writer, which the dashboard depends on while a scheduled run is
-        # in progress.
+        # WAL lets the dashboard read while a scheduled run is writing.
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA synchronous = NORMAL")
 
@@ -78,20 +63,19 @@ def connect(db_path=DB_PATH, read_only=False):
 
 
 def init_db(conn):
-    """Apply schema.sql. Safe to call on every run; all DDL is IF NOT EXISTS."""
+    """Apply schema.sql. All DDL is IF NOT EXISTS, so this is safe every run."""
     conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
 
 
 # --------------------------------------------------------------------------
-# Normalization helpers
+# Normalization
 # --------------------------------------------------------------------------
 
 def canonical_url(url):
-    """Reduce a URL to a form suitable for deduplication.
+    """Strip query, fragment, leading www and trailing slash.
 
-    Retains scheme, host and path. Discards the query string, fragment, a leading
-    'www.' and trailing slashes, since feed providers append tracking parameters
-    that vary between requests for the same article.
+    Feed providers append tracking parameters that vary between requests for the
+    same article, so the raw URL is not a usable identity.
     """
     parts = urlsplit(url.strip())
     host = parts.netloc.lower()
@@ -101,23 +85,22 @@ def canonical_url(url):
 
 
 def url_fingerprint(url):
-    """Return the SHA-256 of a canonicalized URL, used as the article key."""
+    """SHA-256 of the canonical URL. This is the article key."""
     return hashlib.sha256(canonical_url(url).encode("utf-8")).hexdigest()
 
 
 def url_source(url):
-    """Return the publisher host of a URL, for example 'finance.yahoo.com'."""
+    """Publisher host, e.g. finance.yahoo.com."""
     host = urlsplit(url.strip()).netloc.lower()
     return host[4:] if host.startswith("www.") else host
 
 
 def parse_published(raw):
-    """Parse an RSS pubDate into a timezone-aware UTC datetime.
+    """Parse an RSS pubDate into aware UTC. Accepts a datetime unchanged.
 
-    RSS mandates RFC 2822 date formatting, which email.utils parses to
-    specification. Malformed input raises rather than falling back to a heuristic
-    parser, because an incorrect timestamp propagates silently into the trading
-    session assignment and every feature derived from it.
+    RSS mandates RFC 2822, which email.utils parses to spec. Bad input raises
+    rather than falling back to a guess: a wrong timestamp silently corrupts the
+    session assignment and everything derived from it.
     """
     dt = raw if isinstance(raw, datetime) else parsedate_to_datetime(str(raw).strip())
     if dt.tzinfo is None:
@@ -126,29 +109,26 @@ def parse_published(raw):
 
 
 def to_session_date(published_utc):
-    """Return the trading session in which a headline is actionable.
+    """Trading session a headline is actionable in.
 
-    A close-to-close position is established at the 16:00 ET close of session D,
-    so only headlines published before that close can inform it. Headlines
-    published after the close, or outside the trading week, are attributed to the
-    following session. Without this adjustment a substantial share of feed output
-    would be attributed to a session whose return had already been determined.
+    A close-to-close position is entered at the 16:00 ET close, so only news
+    published before it can inform that trade. Anything later, or outside the
+    trading week, belongs to the next session. Applied to live feed data this
+    reclassifies about half of all articles.
 
-    Market holidays are not resolved here. The feature build advances each
-    session_date to the next date present in `prices`, which covers holidays
-    without requiring an exchange calendar.
+    Holidays are left alone here; build_features.py rolls each session_date onto
+    the next date that actually appears in `prices`.
     """
     local = published_utc.astimezone(EXCHANGE_TZ)
     session = local.date()
     if local.time() >= MARKET_CLOSE:
         session += timedelta(days=1)
-    while session.weekday() >= 5:  # Saturday and Sunday
+    while session.weekday() >= 5:
         session += timedelta(days=1)
     return session
 
 
 def _utc_now():
-    """Return the current UTC time as an ISO-8601 string at second precision."""
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
@@ -157,20 +137,16 @@ def _utc_now():
 # --------------------------------------------------------------------------
 
 def upsert_articles(conn, records):
-    """Insert scraped headlines and their ticker associations.
+    """Upsert headlines and their ticker tags.
 
-    Args:
-        conn: An open connection.
-        records: Iterable of mappings with keys ticker, headline, published_at
-            and link, matching the shape the scraper emits. Articles carried by
-            more than one ticker feed collapse into a single raw_news row.
+    `records` are dicts of ticker/headline/published_at/link, the shape the
+    scraper emits. Articles carried by several feeds collapse to one raw_news row.
 
-    Returns:
-        A dict with keys articles_seen, articles_new and links_new.
+    Returns counts: articles_seen, articles_new, links_new.
     """
     now = _utc_now()
-    articles = {}   # fingerprint -> raw_news row
-    tags = set()    # (fingerprint, ticker)
+    articles = {}
+    tags = set()
 
     for rec in records:
         link = rec["link"]
@@ -196,8 +172,8 @@ def upsert_articles(conn, records):
     before_articles = _count(conn, "raw_news")
     before_links = _count(conn, "news_tickers")
 
-    # first_seen_at is excluded from the update clause: it records first
-    # discovery by this pipeline and must survive subsequent re-scrapes.
+    # first_seen_at stays out of the update clause: it records first discovery and
+    # must survive every later re-scrape.
     conn.executemany(
         """
         INSERT INTO raw_news (url_hash, url, headline, source,
@@ -223,16 +199,7 @@ def upsert_articles(conn, records):
 
 
 def upsert_sentiment(conn, scores, model_name=FINBERT_MODEL):
-    """Insert or replace classifier output for one model.
-
-    Args:
-        conn: An open connection.
-        scores: Iterable of (article_id, label, confidence) triples.
-        model_name: Identifier recorded alongside each score.
-
-    Returns:
-        The number of rows written.
-    """
+    """Upsert (article_id, label, confidence) triples for one model."""
     scores = list(scores)
     if not scores:
         return 0
@@ -254,15 +221,7 @@ def upsert_sentiment(conn, scores, model_name=FINBERT_MODEL):
 
 
 def upsert_prices(conn, rows):
-    """Insert or update OHLCV bars.
-
-    Args:
-        conn: An open connection.
-        rows: Iterable of (ticker, date, open, high, low, close, volume) tuples.
-
-    Returns:
-        The number of rows written.
-    """
+    """Upsert (ticker, date, open, high, low, close, volume) tuples."""
     rows = list(rows)
     if not rows:
         return 0
@@ -283,20 +242,11 @@ def upsert_prices(conn, rows):
 
 
 def replace_daily_features(conn, rows):
-    """Replace the feature matrix within the caller's transaction.
+    """Swap in a fresh feature matrix.
 
-    The derived table is rebuilt rather than merged, so that rows computed under
-    a superseded feature definition cannot persist alongside current ones. The
-    delete and the insert share one transaction, so a concurrent reader never
-    observes the table empty.
-
-    Args:
-        conn: An open connection.
-        rows: Iterable of tuples matching the daily_features column order,
-            excluding built_at, which is applied here.
-
-    Returns:
-        The number of rows written.
+    Rebuilt rather than merged so rows computed under an old feature definition
+    cannot survive next to current ones. The delete and insert share the caller's
+    transaction, so a reader never sees the table empty.
     """
     rows = list(rows)
     conn.execute("DELETE FROM daily_features")
@@ -325,7 +275,7 @@ def replace_daily_features(conn, rows):
 # --------------------------------------------------------------------------
 
 def article_ids_by_fingerprint(conn, fingerprints):
-    """Return a mapping of url_hash to article_id for the given fingerprints."""
+    """Map url_hash to article_id, chunked around the parameter cap."""
     fingerprints = list(fingerprints)
     out = {}
     for i in range(0, len(fingerprints), _PARAM_CHUNK):
@@ -340,12 +290,11 @@ def article_ids_by_fingerprint(conn, fingerprints):
 
 
 def fetch_unscored_articles(conn, model_name=FINBERT_MODEL):
-    """Return articles that carry no score for the given model.
+    """Articles with no score for this model.
 
-    The anti-join keeps the cost of the sentiment stage proportional to new input
-    rather than to total history, which matters because model inference dominates
-    pipeline runtime. It also allows scoring to be backfilled at any point after
-    collection, since the headline text is already persisted.
+    The anti-join is what makes scoring cheap to re-run and resumable: inference
+    dominates runtime, and headline text is already stored, so a backlog of any
+    size can be cleared whenever convenient.
     """
     return conn.execute(
         """
@@ -361,7 +310,6 @@ def fetch_unscored_articles(conn, model_name=FINBERT_MODEL):
 
 
 def distinct_tickers(conn):
-    """Return every ticker that has at least one associated article."""
     rows = conn.execute("SELECT DISTINCT ticker FROM news_tickers ORDER BY ticker").fetchall()
     return [r["ticker"] for r in rows]
 
@@ -371,7 +319,6 @@ def _count(conn, table):
 
 
 def table_counts(conn):
-    """Return row counts for every table, for pipeline logging."""
     return {t: _count(conn, t) for t in
             ("raw_news", "news_tickers", "sentiment_scores", "prices", "daily_features")}
 

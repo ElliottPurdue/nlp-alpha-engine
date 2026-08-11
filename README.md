@@ -101,11 +101,6 @@ app.py                 Streamlit dashboard
 Every stage reads from and writes to SQLite, so stages are independent and
 individually re-runnable. A stage that fails halfway leaves no partial state.
 
-`migrate_csv.py` and the two CSV extracts in the repository root predate the
-database. They are kept rather than deleted because the database file is not
-version-controlled, so together they are the only recoverable copy of the earliest
-live headlines, which have since rotated out of the source feed.
-
 | Stage | Module | Status |
 |---|---|---|
 | News ingestion | `scraper.py` | ✅ Scheduled hourly |

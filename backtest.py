@@ -1,21 +1,17 @@
-"""Convert walk-forward predictions into a long/short equity curve.
+"""Long/short equity curve from walk-forward predictions.
 
-The portfolio is dollar-neutral and rebalanced every session: long the top
-quintile by predicted score, short the bottom quintile, equally weighted within
-each side. That construction follows directly from what the model predicts --
-relative performance within a session -- and its return is the spread between the
-two baskets, which is unaffected by the market's direction.
+Dollar-neutral, rebalanced every session: long the top quintile by score, short the
+bottom, equally weighted. That follows from what the model predicts -- relative
+performance within a session -- and the return is the spread between the baskets,
+so the market's direction drops out.
 
-Written directly in pandas rather than through a backtesting library. The
-portfolio is simple enough that the twenty lines of accounting here are easier to
-audit than a library's conventions about weights, fills and rebalance timing, and
-every assumption is visible in one place.
+Written in pandas rather than through a backtesting library. The portfolio is simple
+enough that twenty lines of explicit accounting is easier to audit than a library's
+conventions about weights, fills and rebalance timing.
 
-Two figures are reported. Gross return is the signal's raw spread. Net return
-subtracts a transaction-cost estimate derived from realized turnover, which
-matters more than it might appear: a daily-rebalanced book with four names a side
-turns over almost completely each session, so costs alone impose a substantial
-annual drag that any real signal would have to clear first.
+Gross and net are both reported. Net matters more than it looks: a daily-rebalanced
+book with four names a side turns over almost completely each session, so cost alone
+imposes a drag any real signal would have to clear first.
 """
 
 import numpy as np
@@ -23,17 +19,14 @@ import pandas as pd
 
 from walkforward import walk_forward
 
-# Fraction of each session's names taken on each side. A quintile gives roughly
-# four names a side at the median session width of 21.
+# Fraction taken on each side. A quintile is about four names at the median session
+# width of 21.
 SIDE_FRACTION = 0.2
 
-# Sessions offering fewer than this many names per side are skipped: a two-name
-# basket is a bet on two companies, not on a signal.
+# Below this, a basket is a bet on two companies rather than on a signal.
 MIN_NAMES_PER_SIDE = 2
 
-# One-way cost in basis points of notional traded, covering commission and
-# spread. Five is a reasonable retail-to-institutional estimate for large-cap US
-# equities.
+# One-way cost in basis points of notional traded, covering commission and spread.
 COST_BPS = 5.0
 
 TRADING_DAYS = 252
@@ -42,38 +35,24 @@ EQUITY_CURVE_PATH = "equity_curve.png"
 
 
 def _max_drawdown(equity):
-    """Largest peak-to-trough decline of an equity series, as a negative number."""
     return (equity / equity.cummax() - 1).min()
 
 
 def _annualized_stats(returns, label):
-    """Summarize a return series over the standard annualization convention."""
-    total = (1 + returns).prod() - 1
-    volatility = returns.std() * np.sqrt(TRADING_DAYS)
-    annualized = (1 + returns).prod() ** (TRADING_DAYS / len(returns)) - 1
-    sharpe = (returns.mean() / returns.std() * np.sqrt(TRADING_DAYS)
-              if returns.std() else 0.0)
     return {
         "label": label,
-        "total": total,
-        "annualized": annualized,
-        "volatility": volatility,
-        "sharpe": sharpe,
+        "total": (1 + returns).prod() - 1,
+        "annualized": (1 + returns).prod() ** (TRADING_DAYS / len(returns)) - 1,
+        "volatility": returns.std() * np.sqrt(TRADING_DAYS),
+        "sharpe": (returns.mean() / returns.std() * np.sqrt(TRADING_DAYS)
+                   if returns.std() else 0.0),
         "max_drawdown": _max_drawdown((1 + returns).cumprod()),
         "hit_rate": (returns > 0).mean(),
     }
 
 
 def build_portfolio(predictions):
-    """Compute per-session portfolio returns, turnover and the benchmark.
-
-    Args:
-        predictions: Walk-forward output carrying `score` and `fwd_return`.
-
-    Returns:
-        A DataFrame indexed by session date with gross, net, cost and benchmark
-        return columns.
-    """
+    """Per-session portfolio returns, turnover and benchmark, indexed by date."""
     records = []
     previous_weights = {}
 
@@ -85,16 +64,15 @@ def build_portfolio(predictions):
         ordered = group.sort_values("score", ascending=False)
         longs, shorts = ordered.head(per_side), ordered.tail(per_side)
 
-        # The spread is identical whether computed on raw or excess returns, since
-        # the session's cross-sectional mean cancels between the two baskets.
-        # Raw returns are used because they are what the book actually earns.
+        # Identical whether computed on raw or excess returns, since the session
+        # mean cancels between the baskets. Raw is what the book actually earns.
         gross = longs["fwd_return"].mean() - shorts["fwd_return"].mean()
 
         weights = {t: 1.0 / per_side for t in longs["ticker"]}
         weights.update({t: -1.0 / per_side for t in shorts["ticker"]})
 
-        # Notional traded per unit of capital. A complete rotation of both sides
-        # registers as 4.0: one unit out and one unit in, on each side.
+        # Notional traded per unit of capital. A full rotation of both sides reads
+        # as 4.0: one unit out and one in, on each side.
         touched = set(weights) | set(previous_weights)
         turnover = sum(abs(weights.get(t, 0.0) - previous_weights.get(t, 0.0))
                        for t in touched)
@@ -116,14 +94,13 @@ def build_portfolio(predictions):
 
 
 def plot_equity_curve(book, path=EQUITY_CURVE_PATH):
-    """Write the equity curve to a PNG, if matplotlib is available."""
+    """Write the curve to PNG if matplotlib is installed."""
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except ImportError:
         print(f"\n  (matplotlib not installed; skipping {path})")
-        print("   install it with: .\\venv\\Scripts\\python.exe -m pip install matplotlib")
         return False
 
     figure, axes = plt.subplots(figsize=(11, 5.5))
@@ -147,17 +124,15 @@ def plot_equity_curve(book, path=EQUITY_CURVE_PATH):
 
 
 def period_breakdown(book, freq="QE"):
-    """Aggregate returns by calendar period.
+    """Returns by calendar period.
 
-    Headline Sharpe implies a consistency that a concentrated return does not
-    have. A per-period table is the cheapest way to see whether performance was
-    earned steadily or arrived in a single episode.
+    A headline Sharpe implies steadiness that a concentrated return does not have,
+    and this is the cheapest way to see which one you have.
     """
     return book.groupby(pd.Grouper(freq=freq))[["gross", "net", "benchmark"]].sum()
 
 
 def run():
-    """Run the backtest over walk-forward predictions and report performance."""
     print("Generating walk-forward predictions...")
     predictions, _ = walk_forward()
 
@@ -179,9 +154,6 @@ def run():
               f"{row['volatility']:>8.1%}{row['sharpe']:>+9.2f}"
               f"{row['max_drawdown']:>+9.1%}{row['hit_rate']:>7.1%}")
 
-    # Turnover is reported explicitly because it is the mechanism behind the gap
-    # between the gross and net rows, and because it shows how demanding daily
-    # rebalancing is for a signal of any size.
     mean_turnover = book["turnover"].mean()
     annual_drag = book["cost"].mean() * TRADING_DAYS
     print(f"\n  mean turnover per session   {mean_turnover:.2f}x capital")
@@ -194,11 +166,10 @@ def run():
         print(f"  {str(period.date()):<12}{row['gross']:>+10.2%}"
               f"{row['net']:>+10.2%}{row['benchmark']:>+12.2%}")
 
-    # Concentration is the check that reconciles this backtest with the near-zero
-    # information coefficient. A gross return arising almost entirely from one
-    # quarter is an episode rather than an edge, and the IC -- which weights every
-    # session equally instead of by magnitude -- is the statistic that detects
-    # that. Reported here so the headline Sharpe cannot be read in isolation.
+    # This is what reconciles the backtest with a near-zero information
+    # coefficient. A return arriving almost entirely in one quarter is an episode,
+    # and the IC -- weighting sessions equally instead of by magnitude -- is what
+    # catches that. Reported so the headline Sharpe cannot be read alone.
     total_gross = book["gross"].sum()
     best_quarter = quarters["gross"].max()
     negative_quarters = (quarters["gross"] < 0).sum()

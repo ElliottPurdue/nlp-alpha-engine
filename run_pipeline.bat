@@ -1,9 +1,8 @@
 @echo off
-REM Entry point for the scheduled task; appends all output to pipeline.log.
+REM Scheduled-task entry point. Appends everything to pipeline.log.
 REM
-REM %~dp0 expands to this file's own directory with a trailing backslash. Paths
-REM are built from it rather than assumed relative, because Task Scheduler does
-REM not guarantee the working directory it supplies.
+REM %~dp0 is this file's own directory with a trailing backslash. Paths are built
+REM from it because Task Scheduler makes no promise about the working directory.
 
 cd /d "%~dp0"
 echo. >> pipeline.log

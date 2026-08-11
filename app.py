@@ -1,14 +1,11 @@
-"""Streamlit dashboard for the NLP alpha engine.
+"""Streamlit dashboard.
 
-Reads the SQLite database opened read-only, so the dashboard can be viewed while
-the scheduled pipeline is writing. The database runs in WAL mode specifically to
-permit that; without it, a scrape in progress would block every query here.
+Opens the database read-only, which WAL mode makes safe while a scheduled scrape is
+writing. Without WAL a run in progress would block every query here.
 
-The dashboard has two distinct jobs and keeping them separate is deliberate. The
-live sections show what the pipeline is collecting right now. The research section
-reports what the historical study actually concluded, which is that no tradable
-signal was found. Showing a live sentiment feed without that context would imply a
-working strategy the evidence does not support.
+The live sections and the research section are kept apart on purpose. Showing a
+sentiment feed without the finding next to it would imply a working strategy the
+evidence does not support.
 
 Run with:  streamlit run app.py
 """
@@ -22,8 +19,8 @@ import streamlit as st
 
 import database as db
 
-# Long enough that clicking around does not re-query on every interaction, short
-# enough that an hourly scrape shows up without a manual refresh.
+# Long enough that clicking around does not re-query, short enough that an hourly
+# scrape appears without a manual refresh.
 CACHE_TTL = 300
 
 SENTIMENT_COLORS = {
@@ -32,14 +29,14 @@ SENTIMENT_COLORS = {
     "neutral": "#6b6b6b",
 }
 
-# Boundary between the backfilled historical corpus and live collection. The two
-# come from different sources with different coverage, so they are never mixed in
-# a single view.
+# Divides the FNSPID backfill from live collection. The two have different sources
+# and coverage and are never mixed in one view.
 LIVE_PERIOD_START = "2026-01-01"
 
 ROLLING_WINDOW = 7
 
-# Opening selection for the price chart, chosen for dense historical coverage.
+# FNSPID covers JPM on 68% of historical sessions against AAPL's 10%, so it opens on
+# a dense series rather than a near-empty one.
 DEFAULT_CHART_TICKER = "JPM"
 
 st.set_page_config(page_title="NLP Alpha Engine", page_icon="📈", layout="wide")
@@ -51,7 +48,6 @@ st.set_page_config(page_title="NLP Alpha Engine", page_icon="📈", layout="wide
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_summary():
-    """Row counts and collection freshness for the header metrics."""
     with db.connect(read_only=True) as conn:
         counts = db.table_counts(conn)
         row = conn.execute(
@@ -64,7 +60,6 @@ def load_summary():
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_recent_headlines(limit=400):
-    """Most recent scored headlines, newest first."""
     with db.connect(read_only=True) as conn:
         return pd.read_sql_query(
             """
@@ -82,12 +77,11 @@ def load_recent_headlines(limit=400):
 
 @st.cache_data(ttl=CACHE_TTL)
 def live_window_start(buffer_days=21):
-    """Start of the live charting window, derived from the data.
+    """Start of the live chart window, taken from the data.
 
-    Live collection is only weeks old while price history runs ten years, so a
-    fixed start date would draw hundreds of price points beside a handful of
-    sentiment points. A short buffer before the first live observation gives
-    price context without a long empty stretch.
+    Live collection is weeks old while price history runs ten years, so a fixed
+    start date would draw hundreds of price points beside a handful of sentiment
+    points.
     """
     with db.connect(read_only=True) as conn:
         earliest = conn.execute(
@@ -101,12 +95,11 @@ def live_window_start(buffer_days=21):
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_ticker_series(ticker, start, end):
-    """Price series for one ticker with sentiment attached where it exists.
+    """Prices for one ticker with sentiment attached where it exists.
 
-    Driven from `prices` rather than `daily_features` so the price line stays
-    continuous through sessions that produced no news. Bounded at both ends
-    because sentiment exists only in two disjoint blocks and an unbounded window
-    would stretch the chart across the six-year gap between them.
+    Driven from `prices` so the price line stays continuous through sessions with no
+    news. Bounded at both ends because sentiment exists in two disjoint blocks and an
+    open window would stretch the chart across the six-year gap between them.
     """
     with db.connect(read_only=True) as conn:
         frame = pd.read_sql_query(
@@ -130,7 +123,6 @@ def load_ticker_series(ticker, start, end):
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_coverage():
-    """Articles per session, for the data-coverage view."""
     with db.connect(read_only=True) as conn:
         return pd.read_sql_query(
             """
@@ -153,11 +145,10 @@ def load_universe():
 # --------------------------------------------------------------------------
 
 def render_headline_card(row):
-    """Render one headline with a sentiment-coloured left border.
+    """One headline with a sentiment-coloured left border.
 
-    The headline and source are escaped: they are third-party text arriving from
-    an RSS feed, and pasting them unescaped into markup would both break the
-    layout and inject arbitrary HTML into the page.
+    Headline and source are escaped: they are third-party RSS text, and pasting them
+    unescaped would both break the layout and inject arbitrary HTML.
     """
     colour = SENTIMENT_COLORS.get(row.sentiment_label, "#6b6b6b")
     st.markdown(
@@ -203,15 +194,12 @@ def render_live_feed():
 
 def render_sentiment_vs_price():
     universe = load_universe()
-    # JPM rather than AAPL: FNSPID covers it on 68% of historical sessions against
-    # AAPL's 10%, so the default view shows a dense series instead of a near-empty
-    # one. Coverage varies widely by name and the caption reports it per selection.
     default = universe.index(DEFAULT_CHART_TICKER) if DEFAULT_CHART_TICKER in universe else 0
     ticker = st.selectbox("Ticker", universe, index=default, key="chart_ticker")
 
-    # Both windows are bounded to where sentiment actually exists. The historical
-    # block is dense and is the default; live collection is only a fortnight old
-    # and will fill in as the scheduled scrape keeps running.
+    # Both windows are bounded to where sentiment exists. The historical block is
+    # dense and opens by default; live collection is a fortnight old and fills in as
+    # the scheduled scrape keeps running.
     periods = {
         "Historical backfill (2018-2020)": ("2018-01-01", "2020-06-30"),
         "Live collection": (live_window_start(), "2100-01-01"),
@@ -235,8 +223,8 @@ def render_sentiment_vs_price():
                 title=f"{ROLLING_WINDOW}-day mean sentiment"),
     )
 
-    # Independent y-scales: sentiment lives in [-1, 1] while price is in the
-    # hundreds, so a shared axis would flatten the sentiment line to nothing.
+    # Independent scales: sentiment sits in [-1, 1] and price in the hundreds, so a
+    # shared axis flattens the sentiment line to nothing.
     st.altair_chart(
         alt.layer(price_line, sentiment_line).resolve_scale(y="independent")
         .properties(height=420),
@@ -262,10 +250,10 @@ def render_pipeline():
         use_container_width=True,
     )
     st.caption(
-        "The gap is real and unavoidable: the FNSPID backfill ends June 2020, and "
-        "live collection began in 2026. The two blocks come from different sources "
-        "with different coverage, so the study is fitted on the historical block "
-        "and the live period is reserved as an untouched forward test."
+        "The gap is real: the FNSPID backfill ends June 2020 and live collection "
+        "began in 2026. The two blocks come from different sources with different "
+        "coverage, so the study is fitted on the historical block and the live "
+        "period is reserved as an untouched forward test."
     )
 
     live = coverage[coverage["session_date"] >= LIVE_PERIOD_START]
@@ -289,7 +277,7 @@ def render_research():
 
         The sample could only have detected a mean IC above **0.027**. Published
         daily equity news signals typically run 0.01–0.03, so this rules out a
-        large effect, not a small one — a distinction worth stating precisely.
+        large effect, not a small one.
         """
     )
 
@@ -315,10 +303,9 @@ def render_research():
     st.markdown(
         """
         A dollar-neutral quintile long/short book rebalanced daily returns
-        **+7.8% annualized gross, Sharpe +0.50** — which looks like an edge and
-        is not one. The entire gross return comes from Q2 2020: excluding that
-        single quarter it is **−4.7%**, and two of seven quarters are outright
-        negative.
+        **+7.8% annualized gross, Sharpe +0.50** — which looks like an edge and is
+        not one. The entire gross return comes from Q2 2020: excluding that single
+        quarter it is **−4.7%**, and two of seven quarters are outright negative.
 
         Turnover of **3.36× capital per session** implies a **42% annual cost
         drag** at 5bps, leaving **−29.4% annualized net**. Holding the universe
@@ -326,8 +313,7 @@ def render_research():
 
         The information coefficient weights every session equally; profit and loss
         weights by magnitude. That is why a handful of violent sessions produced an
-        apparently positive backtest while the IC correctly reported nothing, and
-        it is the reason the IC is the statistic to trust.
+        apparently positive backtest while the IC correctly reported nothing.
         """
     )
 

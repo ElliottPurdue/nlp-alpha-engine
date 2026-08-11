@@ -1,30 +1,18 @@
 """Pre-registered hypothesis tests.
 
-Both hypotheses below were stated before any of these results were computed, and
-every configuration is reported regardless of outcome. That distinction matters:
-running four tests and reporting four is an experiment, while running forty and
-reporting the best is a story about noise.
+Both hypotheses were written down before any of these numbers existed, and every
+configuration is reported whatever it shows. Running four tests and reporting four
+is an experiment; running forty and reporting the best is a story about noise.
 
-    H0  Level features over a one-day horizon. The existing configuration,
-        included as the reference point rather than as a hypothesis.
+    H1  Surprise beats level. Cross-sectional ranks say how a stock's news compares
+        with its peers but cannot say how it compares with the stock's own normal,
+        and abnormal attention and tone are what the literature ties to returns.
 
-    H1  Surprise beats level. Cross-sectional ranks describe how a stock's news
-        compares with its peers; they cannot express how it compares with the
-        stock's own normal. Published work associates returns with abnormal
-        attention and tone rather than with their levels, and the current feature
-        set has no way to represent that.
+    H2  One day is too short. Daily returns are mostly microstructure noise; five
+        days gives a real effect room to show up.
 
-    H2  One day is too short. Daily returns are dominated by microstructure
-        noise. A five-day horizon gives any genuine effect room to surface.
-
-Because four configurations are tested, the conventional |t| > 2 threshold is too
-permissive. A Bonferroni correction for four tests puts the 5% threshold at
-roughly |t| > 2.5, which is applied when reporting verdicts.
-
-Overlapping observations are handled by striding the five-day IC series by five
-sessions: consecutive five-day returns share four of their five days, so their
-per-session ICs are strongly autocorrelated and an uncorrected t-statistic would
-overstate significance considerably.
+With five configurations the usual |t| > 2 bar is too loose, so verdicts use a
+Bonferroni-corrected |t| > 2.5.
 """
 
 from alpha_engine import FEATURE_SETS
@@ -40,12 +28,10 @@ HYPOTHESES = [
     ("aux  combined / 1-day", "combined", "target_relative", "excess_return", 1),
 ]
 
-# Bonferroni-adjusted two-sided 5% threshold for the number of tests run.
 SIGNIFICANCE_T = 2.5
 
 
 def run():
-    """Evaluate every pre-registered configuration and report all outcomes."""
     results = []
 
     for label, feature_set, target, excess_column, stride in HYPOTHESES:
@@ -83,9 +69,8 @@ def run():
         print("  stands against a genuine attempt to overturn it rather than by")
         print("  default.")
 
-    # The smallest true effect this sample could have detected. Reporting it
-    # distinguishes "no signal exists" from "no signal large enough to see here",
-    # which are very different claims.
+    # Smallest true effect this sample could have caught. "No signal exists" and
+    # "no signal large enough to see here" are very different claims.
     print("\nMinimum detectable mean IC per configuration:")
     for stats in results:
         if stats["ic_sessions"]:

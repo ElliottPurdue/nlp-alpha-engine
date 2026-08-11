@@ -1,16 +1,14 @@
 """Backfill historical headlines from the FNSPID dataset.
 
-Streams FNSPID's headline-level export from HuggingFace in chunks, filters to the
-configured universe and date range, and writes through the same upsert path the
-live scraper uses. Nothing is stored on disk.
+Streams FNSPID's headline export from HuggingFace in chunks, filters to the
+universe and date range, and writes through the same upsert the live scraper uses.
+Nothing is stored on disk.
 
-One difference from live collection is material and deliberate. FNSPID records
-are largely date-only, carrying no intraday timestamp, so it cannot be
-established whether an article preceded or followed the close. Those records are
-attributed to the FOLLOWING session, the only assumption that cannot introduce
-lookahead. It is knowingly conservative: a genuine same-session effect is shifted
-a day later and therefore understated. Assuming intraday publication instead
-would risk precisely the bias the live pipeline was built to eliminate.
+One difference from live collection is deliberate. FNSPID records are largely
+date-only, so whether an article preceded or followed the close is unknowable.
+Those records are attributed to the FOLLOWING session, the only assumption that
+cannot leak. It understates any genuine same-session effect, which is the right
+direction to be wrong in.
 """
 
 import datetime as dt
@@ -25,8 +23,8 @@ FNSPID_URL = (
     "Stock_news/All_external.csv"
 )
 
-# The export is ordered by symbol, so the entire file must be scanned to reach
-# every ticker in the universe. Chunking keeps memory flat while doing so.
+# The export is ordered by symbol, so the whole file must be scanned to reach every
+# ticker. Chunking keeps memory flat while doing it.
 CHUNK_ROWS = 200_000
 
 # Inclusive publication-date bounds; None disables a bound.
@@ -37,16 +35,15 @@ UNIVERSE = set(TICKERS)
 
 
 def _publication_timestamp(raw):
-    """Convert an FNSPID Date value to an aware UTC datetime, or None."""
+    """FNSPID Date value to aware UTC, or None if unparseable."""
     stamp = pd.to_datetime(raw, errors="coerce", format="mixed", utc=True)
     if pd.isna(stamp):
         return None
 
     stamp = stamp.to_pydatetime()
     if (stamp.hour, stamp.minute, stamp.second) == (0, 0, 0):
-        # Date-only record: pinned to just before midnight exchange time so that
-        # database.to_session_date routes it through its after-close branch and
-        # into the following session.
+        # Date-only. Pinned just before midnight exchange time so that
+        # to_session_date takes its after-close branch.
         stamp = dt.datetime.combine(
             stamp.date(), dt.time(23, 59), tzinfo=db.EXCHANGE_TZ
         )
@@ -54,11 +51,7 @@ def _publication_timestamp(raw):
 
 
 def backfill(start=START_DATE, end=END_DATE, url=FNSPID_URL):
-    """Stream, filter and upsert historical headlines.
-
-    Returns:
-        The number of articles newly inserted.
-    """
+    """Stream, filter and upsert historical headlines. Returns articles inserted."""
     print(f"Streaming FNSPID for {len(UNIVERSE)} tickers "
           f"({start or 'earliest'} .. {end or 'latest'})")
     print("The export is 5.7 GB and ordered by symbol, so a full scan is required.\n")
@@ -117,9 +110,9 @@ def backfill(start=START_DATE, end=END_DATE, url=FNSPID_URL):
                     new_links += stats["links_new"]
                     bounds.extend([as_timestamp.min(), as_timestamp.max()])
 
-                    # Committed as we go: a full scan runs long enough that
-                    # losing all progress to a dropped connection would be
-                    # costly, and the upsert makes restarting harmless.
+                    # Committed as we go. A full scan runs long enough that losing
+                    # everything to a dropped connection would hurt, and the upsert
+                    # makes restarting harmless.
                     conn.commit()
 
             if index % 10 == 0:

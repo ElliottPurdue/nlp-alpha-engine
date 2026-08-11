@@ -1,12 +1,9 @@
-"""Pipeline stage 2: score unscored headlines with FinBERT.
+"""Stage 2: score unscored headlines with FinBERT.
 
-Only articles carrying no score for the configured model are read, so this stage
-costs time proportional to new input rather than to accumulated history. That
-matters because model inference dominates pipeline runtime.
-
-Because headline text is persisted at collection time, scoring is decoupled from
-collection entirely: a backlog of any size can be cleared in a single pass,
-whenever it is convenient to run.
+Only articles with no score for this model are read, so cost scales with new input
+rather than with total history. Because headline text is stored at collection time,
+scoring is fully decoupled from collection: a backlog of any size can be cleared
+whenever it is convenient.
 """
 
 from transformers import pipeline
@@ -15,30 +12,17 @@ import database as db
 
 BATCH_SIZE = 32
 
-# Scores are committed in groups of roughly this size. A backfill pass runs for
-# around an hour, so buffering everything to the end would mean an interruption
-# discarded all of it. Committing periodically caps the loss at one group and
-# makes the pass stoppable and resumable.
+# Committed in groups. A backfill pass runs about an hour, so holding everything
+# until the end would mean an interruption discarded all of it.
 COMMIT_EVERY = 320
-# FinBERT's context window. Headlines fall well short of it, but truncating
-# guards against an unusually long title raising mid-batch.
-MAX_TOKENS = 512
 
-# Progress is reported every this many batches. Frequent enough to show the run
-# is alive, sparse enough not to flood a log file.
-PROGRESS_EVERY = 10
+# FinBERT's context window. Headlines are far shorter, but truncation stops one
+# unusually long title from raising mid-batch.
+MAX_TOKENS = 512
 
 
 def analyze_sentiment(model_name=db.FINBERT_MODEL):
-    """Score every unscored article and persist the results.
-
-    Args:
-        model_name: HuggingFace model identifier, recorded with each score so
-            that output from different models can coexist.
-
-    Returns:
-        The number of headlines scored.
-    """
+    """Score everything unscored and return how many headlines were processed."""
     with db.connect() as conn:
         db.init_db(conn)
         pending = db.fetch_unscored_articles(conn, model_name)
@@ -47,7 +31,7 @@ def analyze_sentiment(model_name=db.FINBERT_MODEL):
             print("No unscored headlines; the database is up to date.")
             return 0
 
-        print(f"Found {len(pending)} unscored headlines.")
+        print(f"Found {len(pending):,} unscored headlines.")
         print(f"Loading {model_name} (the first run downloads the weights)...")
         classifier = pipeline("sentiment-analysis", model=model_name)
 
@@ -70,8 +54,8 @@ def analyze_sentiment(model_name=db.FINBERT_MODEL):
 
             if len(buffer) >= COMMIT_EVERY or start + BATCH_SIZE >= len(pending):
                 db.upsert_sentiment(conn, buffer, model_name)
-                # Committed mid-pass so an interrupted run keeps its work; the
-                # anti-join then resumes from exactly where it stopped.
+                # Committed mid-pass, so an interrupted run keeps its work and the
+                # anti-join resumes from where it stopped.
                 conn.commit()
                 completed += len(buffer)
                 buffer = []

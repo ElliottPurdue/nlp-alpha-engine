@@ -1,18 +1,14 @@
-"""Walk-forward evaluation of the cross-sectional classifier.
+"""Walk-forward evaluation.
 
-A single chronological split yields one verdict from one market regime. Because
-the historical corpus ends in June 2020, that split always places the COVID crash
-in the test set, so no feature change can be meaningfully assessed against it.
+A single split gives one verdict from one regime, and since the corpus ends in June
+2020 that split always lands on the COVID crash. Refitting monthly and scoring each
+following window instead gives eighteen windows across calm markets, the Q4 2018
+selloff, the crash and the recovery. It also produces exactly what a backtest needs.
 
-This module refits at a fixed cadence and evaluates each successive out-of-sample
-window, producing a prediction for every session from a model that never saw it.
-That is both a fairer evaluation and precisely the input a backtest requires.
-
-Reported alongside accuracy is the information coefficient: the per-session rank
-correlation between predicted score and realized excess return. For a
-cross-sectional signal the IC is the more informative statistic, because a
-strategy profits from ranking names correctly rather than from classifying each
-one in isolation.
+Accuracy is reported next to the information coefficient, the per-session rank
+correlation between score and realized excess return. The IC is the more useful
+number here: a long/short book profits from ranking names correctly, not from
+classifying each one.
 """
 
 import numpy as np
@@ -21,20 +17,19 @@ from xgboost import XGBClassifier
 
 from alpha_engine import FEATURE_SETS, TARGET, load_training_frame
 
-# Sessions fitted before the first evaluation window; roughly one trading year.
+# Sessions fitted before the first evaluation window; about a trading year.
 INITIAL_TRAIN_SESSIONS = 250
 
-# Sessions between refits; roughly one month. Frequent enough to adapt, cheap
-# enough that the whole pass runs in seconds.
+# Sessions between refits. Roughly monthly: often enough to adapt, cheap enough
+# that a full pass takes seconds.
 STEP_SESSIONS = 21
 
-# A rank correlation computed on a handful of names is dominated by which names
-# happened to have news that day, so thin sessions are excluded from the IC.
+# A rank correlation over a handful of names says more about which names had news
+# than about the signal, so thin sessions are left out of the IC.
 MIN_NAMES_FOR_IC = 5
 
 
 def _fit_predict(train, test, features, target):
-    """Fit on the training window and return P(outperform) for the test window."""
     model = XGBClassifier(eval_metric="logloss", max_depth=3, learning_rate=0.1)
     model.fit(train[features], train[target])
     return model.predict_proba(test[features])[:, 1]
@@ -42,26 +37,19 @@ def _fit_predict(train, test, features, target):
 
 def walk_forward(frame=None, features=None, target=TARGET,
                  initial=INITIAL_TRAIN_SESSIONS, step=STEP_SESSIONS):
-    """Generate out-of-sample predictions across the full history.
+    """Score every session from a model that never saw it.
 
-    The training window expands rather than rolls: each refit uses all history
-    available at that point, which is what a live system would have had.
+    The training window expands rather than rolls, so each refit uses all the
+    history a live system would have had.
 
-    Args:
-        frame: Feature matrix; loaded for `target` if omitted.
-        features: Feature column names; defaults to the level set.
-        target: Label column to fit against.
-
-    Returns:
-        (predictions, windows). `predictions` is every evaluated row with a
-        `score` column added; `windows` summarises one row per refit.
+    Returns (predictions, windows): the evaluated rows with a `score` column, and
+    one summary row per refit.
     """
     features = FEATURE_SETS["level"] if features is None else features
     frame = load_training_frame(target) if frame is None else frame
 
-    # Rows lacking a feature value cannot be scored. Surprise columns are NULL
-    # until a ticker has accumulated enough history for a baseline, so this
-    # legitimately trims the early part of the sample for those feature sets.
+    # Surprise columns are NULL until a ticker has enough history for a baseline,
+    # so this legitimately trims the start of the sample for those feature sets.
     frame = frame.dropna(subset=list(features) + [target]).reset_index(drop=True)
 
     sessions = (
@@ -108,19 +96,13 @@ def information_coefficient(predictions, excess_column="excess_return",
                             stride=1, min_names=MIN_NAMES_FOR_IC):
     """Per-session Spearman correlation between score and realized excess return.
 
-    Args:
-        predictions: Output of walk_forward.
-        excess_column: Realized excess return to correlate against.
-        stride: Keep only every nth session. For a multi-day horizon consecutive
-            observations share most of their return window, so their ICs are
-            strongly autocorrelated and a naive t-statistic would be inflated;
-            striding by the horizon length restores independence at the cost of
-            sample size.
+    Spearman because only the ordering matters to a long/short book, and ranks
+    shrug off the fat tails of daily returns.
 
-    Returns:
-        A Series indexed by session date. Spearman rather than Pearson because
-        only the ordering of names matters to a long/short book, and ranks are
-        insensitive to the fat tails of daily returns.
+    `stride` keeps every nth session. For a multi-day horizon, consecutive
+    observations share most of their return window, so their ICs are autocorrelated
+    and a naive t-statistic is inflated; striding by the horizon restores
+    independence at the cost of sample size.
     """
     values = {}
     for session, group in predictions.groupby("session_date"):
@@ -135,14 +117,14 @@ def information_coefficient(predictions, excess_column="excess_return",
 
 
 def summarize(predictions, target=TARGET, excess_column="excess_return", stride=1):
-    """Return pooled accuracy and IC statistics for a set of predictions."""
+    """Pooled accuracy and IC statistics for one set of predictions."""
     predicted = (predictions["score"] > 0.5).astype(int)
     share = predictions[target].mean()
 
     ic = information_coefficient(predictions, excess_column, stride)
     ic_std = ic.std()
-    # Standard t-statistic on the mean of per-session ICs. |t| above roughly 2 is
-    # the conventional threshold for a signal distinguishable from noise.
+    # t on the mean of per-session ICs. |t| above about 2 is the usual bar for a
+    # signal distinguishable from noise.
     t_stat = ic.mean() / ic_std * np.sqrt(len(ic)) if ic_std else 0.0
 
     return {
@@ -159,7 +141,6 @@ def summarize(predictions, target=TARGET, excess_column="excess_return", stride=
 
 
 def run():
-    """Evaluate the default configuration and report per-window statistics."""
     predictions, windows = walk_forward()
 
     print(f"=== {len(windows)} walk-forward windows ===")

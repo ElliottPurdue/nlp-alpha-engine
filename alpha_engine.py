@@ -1,18 +1,16 @@
-"""Pipeline stage 4: train and evaluate the cross-sectional classifier.
+"""Stage 4: train and evaluate the cross-sectional classifier.
 
-Reads daily_features, where calendar alignment, sentiment aggregation, feature
-normalization and label construction have already happened. This module is
-concerned only with fitting and evaluating.
+The question is relative, not directional: within a session, which names beat the
+cross-section? Over half the variance of an individual daily return is the market
+moving, and company news cannot forecast that, so asking for absolute direction
+buries whatever stock-selection signal exists under noise the features could never
+explain.
 
-The question posed is deliberately relative rather than directional: given a
-trading session, which names outperform the cross-section? Roughly half the
-variance of an individual daily return is the market moving, and company-level
-news sentiment cannot forecast that component, so asking for absolute direction
-buries whatever stock-selection signal exists under noise the features could
-never explain.
+Accuracy is always reported next to the majority-class baseline. On its own it
+means nothing.
 
-Evaluation reports the majority-class baseline alongside accuracy. An accuracy
-figure quoted without that reference point is uninterpretable.
+For a fair evaluation use walkforward.py; the single split here permanently lands
+its test window on the COVID crash, because the corpus ends in June 2020.
 """
 
 import pandas as pd
@@ -21,13 +19,8 @@ from xgboost import XGBClassifier
 
 import database as db
 
-# Rank features rather than raw ones: raw volume and headline counts differ
-# across the universe by orders of magnitude and would let the model identify the
-# ticker instead of reading the day.
-#
-# "level" measures a stock against its peers on the day. "surprise" measures it
-# against its own recent history. They answer different questions and are kept
-# separable so the two can be compared rather than silently blended.
+# "level" compares a stock to its peers that day; "surprise" compares it to its own
+# recent history. Different questions, kept separable so they can be compared.
 FEATURE_SETS = {
     "level": ["sentiment_rank", "headline_rank", "volume_rank", "mean_sentiment"],
     "surprise": ["sentiment_surprise_rank", "attention_surprise_rank",
@@ -41,25 +34,21 @@ TARGET = "target_relative"
 
 TEST_FRACTION = 0.2
 
-# The backfilled corpus ends mid-2020 and live collection began in 2026, leaving
-# a six-year gap. Fitting across it would train on one era and test on another
-# with nothing joining them, so the contiguous historical block is used for
-# development and the live period is held back entirely as an untouched forward
-# test.
+# The backfill ends mid-2020 and live collection began in 2026. Fitting across that
+# gap trains on one era and tests on another, so development uses the contiguous
+# historical block and the live period is held back as an untouched forward test.
 MODEL_PERIOD_END = "2020-06-30"
 
-# Below this many labelled rows, evaluation is dominated by sampling noise and is
-# reported only to confirm the pipeline runs end to end.
+# Below this many rows, evaluation is sampling noise and is reported only to show
+# the pipeline runs.
 CREDIBLE_SAMPLE = 300
 
 
 def load_training_frame(target=TARGET):
-    """Load labelled rows from the contiguous historical block, chronologically.
+    """Labelled rows from the contiguous historical block, chronologically ordered.
 
-    Args:
-        target: Label column that must be present; rows lacking it are dropped.
-            The five-day target is NULL for the last few sessions of each ticker,
-            so the usable sample differs by horizon.
+    Rows lacking `target` are dropped. The five-day target is NULL for the last few
+    sessions of each ticker, so the usable sample differs by horizon.
     """
     with db.connect(read_only=True) as conn:
         frame = pd.read_sql_query(
@@ -83,7 +72,7 @@ def load_training_frame(target=TARGET):
 
 
 def build_alpha_engine():
-    """Fit the classifier on the stored feature matrix and report evaluation."""
+    """Fit on one chronological split and report accuracy against the baseline."""
     frame = load_training_frame()
 
     if frame.empty:
@@ -104,11 +93,10 @@ def build_alpha_engine():
         print(f"\n  NOTE: fewer than {CREDIBLE_SAMPLE} labelled rows. The metrics")
         print("  below confirm the pipeline runs; they are not evidence of skill.")
 
-    # Split on a session boundary chosen by cumulative row count, not by session
-    # count. Sessions differ in size by more than an order of magnitude while
-    # collection ramps up, so taking a fixed fraction of sessions would put a
-    # wildly different fraction of rows on each side. Splitting inside a session
-    # would also leak that day's market-wide information across the boundary.
+    # Split on a session boundary, picked by cumulative rows rather than session
+    # count: session sizes differ by more than an order of magnitude while
+    # collection ramps up. Splitting inside a session would also leak that day's
+    # market-wide move across the boundary.
     cumulative = frame.groupby("session_date").size().sort_index().cumsum()
     eligible = cumulative[cumulative <= len(frame) * (1 - TEST_FRACTION)]
 

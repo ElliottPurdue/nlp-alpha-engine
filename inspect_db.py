@@ -1,8 +1,6 @@
-"""Print a summary of current database contents.
+"""Print a summary of what is currently in the database.
 
-Reports table sizes, the distribution of headlines across trading sessions, any
-articles carried by more than one ticker feed, and the sentiment label mix.
-Opened read-only so it is safe to run while the scheduled pipeline is writing.
+Read-only, so it is safe to run while the scheduled pipeline is writing.
 """
 
 import database as db
@@ -12,9 +10,9 @@ with db.connect(read_only=True) as conn:
     for table, count in db.table_counts(conn).items():
         print(f"  {table:<18} {count:>6}")
 
-    # The published_at range within each session reveals the close boundary:
-    # a session whose earliest article is timestamped on the previous calendar
-    # day is the after-close roll applied by database.to_session_date.
+    # The published_at range within a session shows the close boundary at work: a
+    # session whose earliest article is stamped the previous calendar day is the
+    # after-close roll from database.to_session_date.
     print("\n=== how news maps onto trading sessions ===")
     for r in conn.execute("""
         SELECT session_date,
@@ -23,17 +21,20 @@ with db.connect(read_only=True) as conn:
                MAX(published_at) AS latest
         FROM raw_news
         GROUP BY session_date
-        ORDER BY session_date
+        ORDER BY session_date DESC
+        LIMIT 15
     """):
         print(f"  {r['session_date']}  n={r['n']:<4} published {r['earliest']} .. {r['latest']}")
 
-    print("\n=== articles syndicated to more than one ticker ===")
+    print("\n=== articles carried by more than one ticker ===")
     for r in conn.execute("""
         SELECT n.headline, GROUP_CONCAT(t.ticker) AS tickers
         FROM raw_news n
         JOIN news_tickers t USING (article_id)
         GROUP BY n.article_id
         HAVING COUNT(*) > 1
+        ORDER BY n.article_id DESC
+        LIMIT 10
     """):
         print(f"  [{r['tickers']:<11}] {r['headline'][:60]}")
 
@@ -44,4 +45,4 @@ with db.connect(read_only=True) as conn:
         GROUP BY sentiment_label
         ORDER BY n DESC
     """):
-        print(f"  {r['sentiment_label']:<9} n={r['n']:<4} avg net_sentiment={r['avg_net']}")
+        print(f"  {r['sentiment_label']:<9} n={r['n']:<6} avg net_sentiment={r['avg_net']}")

@@ -1,16 +1,9 @@
-"""Pipeline stage 3: ingest market data and rebuild the feature matrix.
+"""Stage 3: ingest market data and rebuild the feature matrix.
 
-Two responsibilities:
-
-    1. Upsert daily OHLCV bars from yfinance into `prices`, which is source of
-       truth and accumulates over time.
-    2. Regenerate `daily_features` in full by joining daily sentiment onto the
-       trading calendar implied by `prices`.
-
-The second is a full rebuild rather than an incremental merge. Feature
-definitions change repeatedly while a model is under development, and a matrix
-containing rows computed under two different definitions is worse than no matrix
-at all, because nothing about it looks wrong.
+Upserts OHLCV into `prices`, then regenerates `daily_features` from scratch.
+The rebuild is deliberate: feature definitions change constantly during
+development, and a matrix holding rows from two different definitions is worse
+than no matrix, because nothing about it looks wrong.
 """
 
 import warnings
@@ -21,48 +14,35 @@ import yfinance as yf
 
 import database as db
 
-# yfinance surfaces pandas FutureWarnings that are not actionable here.
 warnings.filterwarnings("ignore")
 
-# Deeper than current sentiment history can use. Price history is fully
-# backfillable at any time, so there is no cost to storing more of it than the
-# model presently needs, and it leaves room for a longer backtest later.
+# Deeper than the sentiment history needs. Prices are backfillable at any time, so
+# there is no cost to holding more than the model currently uses.
 PRICE_PERIOD = "10y"
 
-# Long-horizon forward return, in trading sessions. Daily returns are dominated
-# by microstructure noise; a week gives any real effect room to surface.
+# Long horizon in sessions, for H2.
 LONG_HORIZON = 5
 
-# Observations of a ticker's own recent history used to establish what is normal
-# for it. Rows are per-ticker news days rather than calendar days, so this spans
-# more than twenty sessions for thinly covered names.
+# Prior observations used to establish what is normal for a ticker. These are
+# per-ticker news days, not calendar days, so for thinly covered names the window
+# spans well over twenty sessions.
 BASELINE_WINDOW = 20
 
-# Minimum prior observations before a baseline is considered meaningful; below
-# this the surprise columns are left NULL rather than computed from one or two
-# points.
+# Below this many prior observations, surprise columns stay NULL rather than being
+# computed off one or two points.
 MIN_BASELINE = 5
 
 
 def _to_int(value):
-    """Return a Python int, or None where pandas holds a missing value."""
     return None if pd.isna(value) else int(value)
 
 
 def _to_float(value):
-    """Return a Python float, or None where pandas holds a missing value."""
     return None if pd.isna(value) else float(value)
 
 
 def ingest_prices(conn, tickers, period=PRICE_PERIOD):
-    """Fetch and upsert OHLCV bars for each ticker.
-
-    Failures are isolated per symbol, matching the scraper's behaviour: one
-    delisted or mistyped ticker must not cost the run every other symbol.
-
-    Returns:
-        The number of bars written.
-    """
+    """Fetch and upsert OHLCV per ticker, isolating failures like the scraper does."""
     print(f"Fetching {period} of market data for {len(tickers)} tickers...")
     total = 0
     failed = []
@@ -101,11 +81,11 @@ def ingest_prices(conn, tickers, period=PRICE_PERIOD):
 
 
 def _load_daily_sentiment(conn, model_name):
-    """Aggregate sentiment per (ticker, session_date).
+    """Sentiment summed per (ticker, session_date).
 
-    Only the sum and the count are aggregated in SQL. The mean is derived after
-    the calendar roll below, because that roll can merge two session dates onto a
-    single trading day, and averaging two means would silently misweight them.
+    Only the sum and count are aggregated here. The mean is taken after the
+    calendar roll below, which can merge two session dates onto one trading day;
+    averaging two means would misweight them.
     """
     return pd.read_sql_query(
         """
@@ -126,7 +106,7 @@ def _load_daily_sentiment(conn, model_name):
 
 
 def _load_prices(conn):
-    """Load prices with the forward return and binary target attached."""
+    """Prices with one-day and five-day forward returns attached."""
     prices = pd.read_sql_query(
         "SELECT ticker, date, close, volume FROM prices ORDER BY ticker, date",
         conn,
@@ -135,8 +115,8 @@ def _load_prices(conn):
     if prices.empty:
         return prices
 
-    # Close-to-close: a position entered at session D's close is exited at the
-    # close of D+1, which is the horizon session_date was constructed to respect.
+    # Close-to-close: entered at session D's close, exited at D+1's. This is the
+    # horizon session_date was built to respect.
     prices["fwd_return"] = (
         prices.groupby("ticker")["close"].transform(lambda c: c.shift(-1) / c - 1)
     )
@@ -145,9 +125,8 @@ def _load_prices(conn):
         np.where(prices["fwd_return"] > 0, 1, 0),
     )
 
-    # The longer horizon for H2. Note that consecutive observations of this
-    # column overlap by four of their five days, so its significance tests
-    # require a correction that the one-day column does not.
+    # Consecutive values of this column overlap by four of their five days, so its
+    # significance tests need a correction the one-day column does not.
     prices["fwd_return_5d"] = (
         prices.groupby("ticker")["close"]
         .transform(lambda c: c.shift(-LONG_HORIZON) / c - 1)
@@ -156,11 +135,7 @@ def _load_prices(conn):
 
 
 def rebuild_features(conn, model_name=db.FINBERT_MODEL):
-    """Regenerate daily_features from stored sentiment and prices.
-
-    Returns:
-        The number of ticker-days written.
-    """
+    """Regenerate daily_features and return the row count written."""
     sentiment = _load_daily_sentiment(conn, model_name)
     prices = _load_prices(conn)
 
@@ -169,10 +144,9 @@ def rebuild_features(conn, model_name=db.FINBERT_MODEL):
         db.replace_daily_features(conn, [])
         return 0
 
-    # session_date is derived without an exchange calendar, so it can land on a
-    # market holiday. merge_asof with direction="forward" advances each one to
-    # the next date that actually traded, resolving holidays without hardcoding
-    # a calendar that would need maintaining every year.
+    # session_date is derived without an exchange calendar and can land on a
+    # holiday. A forward merge_asof advances each one to the next date that
+    # actually traded, which covers holidays without maintaining a calendar.
     calendar = prices[["ticker", "date"]].sort_values("date")
     sentiment = sentiment.sort_values("session_date")
     rolled = pd.merge_asof(
@@ -184,8 +158,8 @@ def rebuild_features(conn, model_name=db.FINBERT_MODEL):
         direction="forward",
     ).dropna(subset=["date"])
 
-    # A holiday and the day following it can now point at the same trading day,
-    # so totals are recombined before the mean is taken.
+    # A holiday and the day after it can now point at the same trading day, so
+    # totals are recombined before the mean is taken.
     daily = (
         rolled.groupby(["ticker", "date"], as_index=False)
         .agg(sum_sentiment=("sum_sentiment", "sum"),
@@ -195,24 +169,20 @@ def rebuild_features(conn, model_name=db.FINBERT_MODEL):
 
     merged = daily.merge(prices, on=["ticker", "date"], how="inner")
 
-    # Cross-sectional normalization. Raw volume spans nearly three orders of
-    # magnitude across the universe and headline counts vary by more than 40x, so
-    # the raw values identify the company rather than describe the day. A
-    # within-session percentile rank makes them comparable across tickers.
+    # Volume spans 799x across this universe and headline counts 43x, so raw values
+    # identify the company rather than describe the day. Ranking within the session
+    # makes them comparable.
     for source, rank_name in (("mean_sentiment", "sentiment_rank"),
                               ("headline_count", "headline_rank"),
                               ("volume", "volume_rank")):
         merged[rank_name] = merged.groupby("date")[source].rank(pct=True)
 
-    # Surprise features (H1). Cross-sectional ranks say whether a stock's news is
-    # positive relative to its peers; these say whether it is unusual relative to
-    # the stock's own recent history, which is what the literature associates with
-    # returns. A quiet name receiving four articles is a far larger event than a
-    # heavily covered one receiving the same four.
+    # Surprise features. Ranks say whether a stock's news is good relative to its
+    # peers; these say whether it is unusual relative to the stock's own history.
+    # Four articles is a large event for a quiet name and nothing for a busy one.
     #
-    # shift(1) before the rolling window is what keeps this causal: without it,
-    # each observation would be measured against a baseline containing itself,
-    # which is a subtle but genuine lookahead.
+    # shift(1) before the window is what keeps this causal. Without it each row is
+    # measured against a baseline containing itself.
     merged = merged.sort_values(["ticker", "date"])
     by_ticker = merged.groupby("ticker")
 
@@ -224,9 +194,8 @@ def rebuild_features(conn, model_name=db.FINBERT_MODEL):
     )
 
     merged["sentiment_surprise"] = merged["mean_sentiment"] - sentiment_baseline
-    # A log ratio rather than a difference, so that a name going from 2 to 8
-    # articles registers the same as one going from 20 to 80. The +1 keeps the
-    # ratio finite when a baseline is zero.
+    # Log ratio, so 2 to 8 articles registers the same as 20 to 80. The +1 keeps it
+    # finite when a baseline is zero.
     merged["attention_surprise"] = np.log(
         (merged["headline_count"] + 1) / (attention_baseline + 1)
     )
@@ -235,10 +204,9 @@ def rebuild_features(conn, model_name=db.FINBERT_MODEL):
                               ("attention_surprise", "attention_surprise_rank")):
         merged[rank_name] = merged.groupby("date")[source].rank(pct=True)
 
-    # Market-relative targets. Over half the variance of one stock's daily return
-    # is the market moving, which company-level sentiment cannot forecast.
-    # Subtracting the session's cross-sectional mean leaves the portion a
-    # stock-selection signal could plausibly explain.
+    # Over half the variance of a stock's daily return is the market moving, which
+    # company-level sentiment cannot forecast. Subtracting the session mean leaves
+    # the part a stock-selection signal could plausibly explain.
     for source, excess_name, target_name in (
         ("fwd_return", "excess_return", "target_relative"),
         ("fwd_return_5d", "excess_return_5d", "target_relative_5d"),
@@ -269,7 +237,6 @@ def rebuild_features(conn, model_name=db.FINBERT_MODEL):
 
 
 def run():
-    """Ingest prices for every tracked ticker, then rebuild the feature matrix."""
     with db.connect() as conn:
         db.init_db(conn)
 
