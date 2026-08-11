@@ -18,10 +18,18 @@ import pandas as pd
 import streamlit as st
 
 import database as db
+from scraper import UNIVERSE
 
 # Long enough that clicking around does not re-query, short enough that an hourly
 # scrape appears without a manual refresh.
 CACHE_TTL = 300
+
+SECTOR_OF = {ticker: sector for sector, tickers in UNIVERSE.items()
+             for ticker in tickers}
+
+# A ticker needs at least this many scored articles in the window to appear on the
+# leaderboard. One stray headline is not a read on a company.
+MIN_ARTICLES_FOR_RANKING = 3
 
 SENTIMENT_COLORS = {
     "positive": "#1a7f5a",
@@ -73,6 +81,42 @@ def load_recent_headlines(limit=400):
             conn,
             params=(limit,),
         )
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def load_recent_sentiment(days=3, min_articles=MIN_ARTICLES_FOR_RANKING):
+    """Per-ticker sentiment over the most recent sessions, with sector attached.
+
+    Anchored to the newest session in the database rather than to today's date, so
+    the view still reads correctly over a weekend or after the scraper has been
+    down.
+    """
+    with db.connect(read_only=True) as conn:
+        latest = conn.execute("SELECT MAX(session_date) FROM raw_news").fetchone()[0]
+        if latest is None:
+            return pd.DataFrame(), None
+
+        cutoff = (pd.Timestamp(latest) - pd.Timedelta(days=days - 1)).date().isoformat()
+        frame = pd.read_sql_query(
+            """
+            SELECT t.ticker,
+                   COUNT(*)                                      AS articles,
+                   AVG(s.net_sentiment)                          AS avg_net,
+                   SUM(s.sentiment_label = 'positive')           AS positive,
+                   SUM(s.sentiment_label = 'negative')           AS negative
+            FROM raw_news n
+            JOIN news_tickers t USING (article_id)
+            JOIN sentiment_scores s USING (article_id)
+            WHERE n.session_date >= ?
+            GROUP BY t.ticker
+            HAVING COUNT(*) >= ?
+            """,
+            conn,
+            params=(cutoff, min_articles),
+        )
+
+    frame["sector"] = frame["ticker"].map(SECTOR_OF)
+    return frame, latest
 
 
 @st.cache_data(ttl=CACHE_TTL)
@@ -168,6 +212,92 @@ def render_headline_card(row):
         """,
         unsafe_allow_html=True,
     )
+
+
+def _diverging_bars(frame, value, label, title, height):
+    """Horizontal bars sorted by value, red below zero and green above."""
+    return (
+        alt.Chart(frame)
+        .mark_bar()
+        .encode(
+            x=alt.X(f"{value}:Q", title="Average sentiment  (-1 to +1)"),
+            y=alt.Y(f"{label}:N", sort="-x", title=None),
+            color=alt.condition(
+                alt.datum[value] > 0,
+                alt.value(SENTIMENT_COLORS["positive"]),
+                alt.value(SENTIMENT_COLORS["negative"]),
+            ),
+            tooltip=[f"{label}:N", alt.Tooltip(f"{value}:Q", format="+.3f"),
+                     "articles:Q"],
+        )
+        .properties(title=title, height=height)
+    )
+
+
+def render_today():
+    st.markdown(
+        "What the news is saying right now. Each stock's score is the average "
+        "sentiment of its recent headlines, from **−1 (all negative)** to "
+        "**+1 (all positive)**."
+    )
+
+    window = st.radio("Window", [3, 7, 14], index=0, horizontal=True,
+                      format_func=lambda days: f"Last {days} sessions")
+    frame, latest = load_recent_sentiment(days=window)
+
+    if frame.empty:
+        st.info("No scored headlines in this window. Run sentiment_analyzer.py.")
+        return
+
+    st.caption(
+        f"Most recent session in the database: **{latest}**. "
+        f"{len(frame)} tickers with at least {MIN_ARTICLES_FOR_RANKING} scored "
+        f"articles, {int(frame['articles'].sum()):,} articles in total. "
+        "Articles collected but not yet scored do not appear."
+    )
+
+    columns = st.columns(3)
+    most_positive = frame.loc[frame["avg_net"].idxmax()]
+    most_negative = frame.loc[frame["avg_net"].idxmin()]
+    columns[0].metric("Most positive", most_positive["ticker"],
+                      f"{most_positive['avg_net']:+.3f}")
+    columns[1].metric("Most negative", most_negative["ticker"],
+                      f"{most_negative['avg_net']:+.3f}")
+    columns[2].metric("Universe average", f"{frame['avg_net'].mean():+.3f}",
+                      f"{int(frame['articles'].sum()):,} articles")
+
+    # Sectors first: eight bars are readable at a glance where fifty-seven are not.
+    # Weighted by article count so a thinly covered name cannot swing a sector.
+    sectors = (
+        frame.dropna(subset=["sector"])
+        .assign(weighted=lambda d: d["avg_net"] * d["articles"])
+        .groupby("sector", as_index=False)
+        .agg(weighted=("weighted", "sum"), articles=("articles", "sum"))
+    )
+    sectors["avg_net"] = sectors["weighted"] / sectors["articles"]
+    st.altair_chart(
+        _diverging_bars(sectors, "avg_net", "sector", "By sector", 260),
+        use_container_width=True,
+    )
+
+    extremes = st.slider("Stocks to show at each end", 5, 25, 10)
+    ranked = pd.concat([
+        frame.nlargest(extremes, "avg_net"),
+        frame.nsmallest(extremes, "avg_net"),
+    ]).drop_duplicates(subset="ticker")
+    st.altair_chart(
+        _diverging_bars(ranked, "avg_net", "ticker",
+                        f"Most positive and most negative {extremes}",
+                        max(300, 22 * len(ranked))),
+        use_container_width=True,
+    )
+
+    with st.expander("All tickers, as a table"):
+        table = frame.sort_values("avg_net", ascending=False)[
+            ["ticker", "sector", "articles", "positive", "negative", "avg_net"]
+        ]
+        st.dataframe(table.round({"avg_net": 3}), hide_index=True,
+                     use_container_width=True)
 
 
 def render_live_feed():
@@ -266,6 +396,26 @@ def render_pipeline():
 
 
 def render_research():
+    st.subheader("In plain language")
+    st.markdown(
+        """
+        The obvious idea is that good news should mean the stock goes up tomorrow.
+        Tested properly, **it doesn't** — at least not in a way you could trade.
+
+        Two follow-up questions explain why, and both have clearer answers:
+
+        - **Sentiment describes the present, not the future.** A headline's tone
+          tracks the move that has *already happened*. By the time it is published,
+          the price has moved.
+        - **How much a company is written about does say something about how
+          volatile it will be** — not which direction, just how big the swings.
+
+        So the news is informative about *risk*, and roughly useless about
+        *direction*. The detail behind each claim is below.
+        """
+    )
+
+    st.divider()
     st.subheader("Does headline sentiment predict relative performance?")
     st.markdown(
         """
@@ -293,6 +443,41 @@ def render_research():
         hide_index=True, use_container_width=True,
     )
 
+    st.divider()
+    st.subheader("What the same data does relate to")
+    st.markdown(
+        """
+        **H4 — sentiment is contemporaneous, not predictive.** The same feature,
+        the same sample, correlated against the past and against the future:
+
+        | Sentiment correlated against | Mean IC | t |
+        |---|---|---|
+        | the return that already happened | +0.0255 | **+2.42** |
+        | the next session's excess return | −0.0023 | −0.23 |
+
+        That pair is the explanation for the null. Headlines report moves rather
+        than anticipating them, which is a mechanical consequence of how they are
+        written.
+
+        **H3 — coverage relates to forward volatility, in the cross-section only.**
+
+        | Test | Mean IC | t |
+        |---|---|---|
+        | coverage level → \\|next return\\| (uncontrolled) | +0.0469 | +4.91 |
+        | trailing volatility → \\|next return\\| | +0.2130 | +19.28 |
+        | coverage → volatility residual *(controlled)* | +0.0281 | **+3.13** |
+        | within-ticker coverage → within-ticker \\|return\\| | −0.0012 | −0.14 |
+
+        The uncontrolled figure overstates it: volatility clusters, so anything
+        correlated with a stock being volatile looks predictive. It survives that
+        control at t = +3.13, but the within-ticker test is flat. So coverage is a
+        **cross-sectional risk characteristic** — widely covered names are riskier
+        names — and **not a timing signal**. A given stock's busy news day says
+        nothing about that stock's next session.
+        """
+    )
+
+    st.divider()
     st.subheader("Why the backtest is more misleading than the IC")
     curve = Path(__file__).resolve().parent / "equity_curve.png"
     if curve.exists():
@@ -335,9 +520,13 @@ def main():
     st.caption(f"Most recent scrape: {last_scrape or 'never'} · "
                f"database opened read-only, safe to view mid-pipeline")
 
-    feed, chart, pipeline, research = st.tabs(
-        ["Live feed", "Sentiment vs price", "Pipeline", "Research findings"]
+    # "Today" leads because it is the only tab that answers the question a general
+    # visitor actually arrives with.
+    today, feed, chart, pipeline, research = st.tabs(
+        ["Today", "Live feed", "Sentiment vs price", "Pipeline", "Research findings"]
     )
+    with today:
+        render_today()
     with feed:
         render_live_feed()
     with chart:

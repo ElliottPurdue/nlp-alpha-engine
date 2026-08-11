@@ -5,22 +5,42 @@ scores them with a finance-specific transformer model (**FinBERT**), aligns the
 resulting sentiment to tradable market sessions, and tests whether it predicts
 cross-sectional equity returns.
 
-It tests for a signal rigorously and reports that it did not find one.
+Sentiment turns out not to predict direction. Two follow-up tests explain why, and
+find what the same data does relate to.
 
 ---
 
-## 📌 Headline result
+## 📌 Findings
 
-> **No cross-sectional ranking signal with mean information coefficient above
-> ~0.027 is present in 2018–2020 FNSPID headline sentiment across 47 large-cap US
-> equities**, evaluated walk-forward with monthly refits over 365 out-of-sample
-> sessions. Mean IC was **−0.0146 (t = −1.33)**. Five pre-registered configurations
-> were tested; all five are reported and none reaches the Bonferroni-corrected
-> threshold of |t| ≥ 2.5.
+Three results, from 37k scored headlines over 615 trading sessions.
 
-Published daily equity news signals typically run IC 0.01–0.03. This result
-therefore rules out a **large** effect, not a small one — a distinction the power
-analysis below makes explicit.
+**1. Headline sentiment does not predict next-session relative returns.** Evaluated
+walk-forward with monthly refits over 365 out-of-sample sessions (2018–2020, 47
+large-cap US equities), mean information coefficient **−0.0146 (t = −1.33)**. Five
+pre-registered configurations were tested; all five are reported and none reaches
+the Bonferroni-corrected threshold of |t| ≥ 2.5. The sample could only have
+detected a mean IC above **0.027**, so this rules out a large effect rather than a
+small one.
+
+**2. Sentiment is contemporaneous with returns, not predictive of them** — which
+explains the first result. The same feature, the same sample:
+
+| Sentiment correlated against | Mean IC | t |
+|---|---|---|
+| the return that already happened | +0.0255 | **+2.42** |
+| the next session's excess return | −0.0023 | −0.23 |
+
+Headlines report moves rather than anticipating them. By publication, the price has
+already moved.
+
+**3. News coverage relates to forward volatility — cross-sectionally, not within a
+stock.** Coverage level predicts the *magnitude* of the next move beyond what
+trailing realized volatility explains (**t = +3.13** after control). But the
+within-ticker test is flat (t = −0.14), so this is a risk characteristic of widely
+covered names, **not a timing signal**.
+
+In short: the news says something about **risk** and almost nothing about
+**direction**.
 
 ![Equity curve](equity_curve.png)
 
@@ -50,14 +70,21 @@ been built, this project would have reported a false positive.
 
 ## 🧪 Pre-registered hypotheses
 
-Both hypotheses were stated before any result was computed, and every
-configuration is reported regardless of outcome.
+Every hypothesis was stated before its result was computed, and every configuration
+is reported regardless of outcome.
 
 - **H1 — surprise beats level.** Cross-sectional ranks describe how a stock's news
   compares with its peers but cannot express how it compares with the stock's own
   normal. The literature associates returns with *abnormal* attention and tone.
 - **H2 — one day is too short.** Daily returns are dominated by microstructure
   noise; five days gives any genuine effect room to surface.
+- **H3 — coverage relates to volatility.** Attention and volatility are linked in
+  the literature, and magnitude is far more forecastable than sign.
+- **H4 — sentiment is contemporaneous.** If a headline describes a move that has
+  already happened, it cannot forecast the next one — which would explain H0–H2.
+
+H1 and H2 are tested by `experiments.py` as classifier configurations. H3 and H4 are
+direct correlation tests in `relationships.py`, since neither needs a model.
 
 | Configuration | Rows | Accuracy | Edge vs baseline | Mean IC | IC sessions | t |
 |---|---|---|---|---|---|---|
@@ -83,6 +110,30 @@ lack the power to succeed.
 Testing stopped at five configurations. Continuing until something cleared the
 threshold would have produced a number, not a finding.
 
+### H3 and H4, with controls
+
+```
+H4  sentiment -> the return that already happened      IC +0.0255   t  +2.42
+    sentiment -> next session's excess return          IC -0.0023   t  -0.23
+
+H3  coverage level -> |next return| (uncontrolled)     IC +0.0469   t  +4.91
+    trailing volatility -> |next return|               IC +0.2130   t +19.28
+    coverage -> volatility residual (controlled)       IC +0.0281   t  +3.13
+    within-ticker coverage -> within-ticker |return|   rho -0.0012  t  -0.14
+```
+
+H3's uncontrolled figure overstates the effect roughly twofold. Volatility clusters,
+so anything correlated with a stock being volatile appears to forecast volatility;
+trailing realized vol alone reaches t = +19.28. Coverage survives that control at
+t = +3.13, but the within-ticker test — which discards every between-stock
+difference — is flat. Reporting both is the point: the effect is a cross-sectional
+risk characteristic, not a signal you could time.
+
+This is the same trap caught earlier in the project, when raw `volume` and
+`headline_count` let the model identify the ticker rather than read the day. A
+feature that encodes stock identity will look predictive of anything that varies by
+stock.
+
 ---
 
 ## 🏗️ Architecture
@@ -93,7 +144,8 @@ backfill_news.py       FNSPID (streamed) ─▶ raw_news, news_tickers
 sentiment_analyzer.py  unscored articles ─▶ sentiment_scores
 build_features.py      yfinance ──────────▶ prices;  joined ─▶ daily_features
 walkforward.py         daily_features ────▶ out-of-sample predictions
-experiments.py         pre-registered hypothesis tests
+experiments.py         H0-H2: can a classifier predict direction?
+relationships.py       H3-H4: what does the same data relate to?
 backtest.py            predictions ───────▶ equity curve, cost analysis
 app.py                 Streamlit dashboard
 ```
@@ -109,7 +161,8 @@ individually re-runnable. A stage that fails halfway leaves no partial state.
 | Sentiment scoring | `sentiment_analyzer.py` | ✅ 37.2k headlines scored |
 | Feature construction | `build_features.py` | ✅ 13.5k ticker-days |
 | Model & evaluation | `alpha_engine.py`, `walkforward.py` | ✅ |
-| Hypothesis tests | `experiments.py` | ✅ 5 configurations |
+| Direction tests (H0-H2) | `experiments.py` | ✅ 5 configurations |
+| Relationship tests (H3-H4) | `relationships.py` | ✅ with controls |
 | Backtest | `backtest.py` | ✅ |
 | Dashboard | `app.py` | ✅ |
 
@@ -233,7 +286,8 @@ python backfill_news.py        # stream 2018-2020 history from FNSPID
 python sentiment_analyzer.py   # score everything unscored
 python build_features.py       # ingest prices, rebuild the feature matrix
 python walkforward.py          # walk-forward evaluation
-python experiments.py          # pre-registered hypothesis tests
+python experiments.py          # H0-H2: direction, pre-registered
+python relationships.py        # H3-H4: volatility and contemporaneity
 python backtest.py             # equity curve and cost analysis
 python inspect_db.py           # summary of database contents
 ```
