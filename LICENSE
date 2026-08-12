@@ -1,0 +1,40 @@
+MIT License
+
+Copyright (c) 2026 Elliott Robert
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+NOTE ON DATA
+
+This license covers the source code in this repository only. It does not cover
+the datasets the pipeline consumes, which carry their own terms:
+
+  FNSPID (Financial News and Stock Price Integration Dataset) is licensed
+  CC BY-NC-4.0 -- non-commercial use with attribution. See the README for the
+  citation. No FNSPID data is redistributed in this repository.
+
+  Market data is retrieved from Yahoo Finance via yfinance, and headlines from
+  Yahoo Finance RSS, each subject to the provider's own terms of use.
+
+  Sentiment scoring uses ProsusAI/finbert, distributed under its own license.
+
+The database file this pipeline builds is not version controlled and is not
+distributed here.

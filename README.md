@@ -464,3 +464,11 @@ Yahoo Finance via `yfinance`. Sentiment scoring uses
 * **Market data:** yfinance
 * **Reporting:** Streamlit, Altair, matplotlib
 * **Scheduling:** Windows Task Scheduler
+
+---
+
+## 📄 License
+
+Source code is MIT licensed. The datasets it consumes are not: FNSPID is
+CC BY-NC-4.0 (non-commercial, attribution required) and no FNSPID data is
+redistributed here. See [LICENSE](LICENSE) for details.
