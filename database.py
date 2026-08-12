@@ -27,6 +27,9 @@ MARKET_CLOSE = time(16, 0)
 # SQLite caps bound parameters per statement; chunk lookups below the limit.
 _PARAM_CHUNK = 900
 
+# Seconds a connection waits for a write lock before raising.
+BUSY_TIMEOUT = 30.0
+
 
 # --------------------------------------------------------------------------
 # Connections
@@ -35,10 +38,13 @@ _PARAM_CHUNK = 900
 @contextmanager
 def connect(db_path=DB_PATH, read_only=False):
     """Commit on clean exit, roll back on exception, always close."""
+    # WAL allows one writer at a time. A long scoring pass and the hourly scrape
+    # will collide eventually, so wait rather than raise: the default five seconds
+    # is thin margin over a run measured in hours.
     if read_only:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=BUSY_TIMEOUT)
     else:
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(db_path, timeout=BUSY_TIMEOUT)
 
     conn.row_factory = sqlite3.Row
 

@@ -16,9 +16,10 @@ import database as db
 
 warnings.filterwarnings("ignore")
 
-# Deeper than the sentiment history needs. Prices are backfillable at any time, so
-# there is no cost to holding more than the model currently uses.
-PRICE_PERIOD = "10y"
+# Must reach back past the earliest headline: the feature join is an inner join, so
+# any session without a price bar drops silently rather than erroring. The FNSPID
+# backfill starts in 2013, and prices are cheap to refetch, so this carries margin.
+PRICE_PERIOD = "15y"
 
 # Long horizon in sessions, for H2.
 LONG_HORIZON = 5

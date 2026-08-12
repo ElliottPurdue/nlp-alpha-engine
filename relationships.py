@@ -19,10 +19,12 @@ realized volatility, and a within-ticker test that removes stock identity outrig
 
 import numpy as np
 import pandas as pd
+from scipy import stats
 
 import database as db
 
-STUDY_END = "2020-06-30"
+# Kept in step with alpha_engine so every test covers the same sample.
+from alpha_engine import MODEL_PERIOD_END as STUDY_END
 
 # Sessions of realized volatility used as the control, strictly prior to each row.
 TRAILING_VOL_WINDOW = 20
@@ -32,8 +34,12 @@ MIN_TRAILING_OBS = 10
 # that day than about any relationship.
 MIN_NAMES_FOR_IC = 5
 
-# Bonferroni-corrected bar for the number of tests reported here.
-SIGNIFICANCE_T = 2.5
+# Bonferroni-corrected bar for the number of tests reported here, derived rather
+# than rounded: at four tests a rounded 2.5 and the exact 2.498 barely differ, but
+# the habit of rounding a threshold is how a t of 2.54 gets called significant.
+FAMILY_ALPHA = 0.05
+TESTS_REPORTED = 4
+SIGNIFICANCE_T = stats.norm.ppf(1 - FAMILY_ALPHA / (2 * TESTS_REPORTED))
 
 
 def load_panel(study_end=STUDY_END):
@@ -88,6 +94,11 @@ def session_ic(frame, predictor, target, min_names=MIN_NAMES_FOR_IC):
     for _, group in frame.groupby("session_date"):
         group = group.dropna(subset=[predictor, target])
         if len(group) < min_names:
+            continue
+        # A constant column has no defined rank correlation. It happens when every
+        # name in a thin session shares a value, and scipy warns rather than
+        # returning quietly, so those sessions are skipped before the call.
+        if group[predictor].nunique() < 2 or group[target].nunique() < 2:
             continue
         correlation = group[predictor].corr(group[target], method="spearman")
         if pd.notna(correlation):
@@ -194,18 +205,49 @@ def run():
             *session_ic(frame, "sentiment_rank", "fwd_return"))
 
     print("\n" + "=" * 78)
-    print(f"Threshold |t| >= {SIGNIFICANCE_T}, Bonferroni-corrected.")
-    print("""
-H3 holds in the cross-section and fails within stocks. Coverage level carries
-information about forward volatility beyond recent realized volatility, but a
-given stock's busy news day does not predict that stock's next-session move. The
-finding is a risk characteristic, not a timing signal, and the within-ticker null
-is reported with it so the distinction travels with the claim.
+    print(f"Threshold |t| >= {SIGNIFICANCE_T:.3f}, Bonferroni-corrected.\n")
+    _verdicts(frame)
 
-H4 holds. Sentiment tracks the move that has already occurred, which is a
-mechanical consequence of how headlines are written and the most likely
-explanation for the null on direction: the text describes the present rather than
-anticipating the next session.""")
+
+def _verdicts(frame):
+    """Derive the conclusions from the numbers rather than reciting fixed prose.
+
+    An earlier version hardcoded its findings. When a larger sample turned the
+    within-ticker control from null to significant, the module went on printing
+    that the control had failed. Conclusions are computed here for that reason.
+    """
+    _, residual_t, _ = session_ic(frame, "headline_rank", "abs_residual")
+    _, within_t, _ = within_ticker_correlation(
+        frame, "attention_surprise", "abs_fwd_return")
+    _, past_t, _ = session_ic(frame, "sentiment_rank", "prev_return")
+    _, future_t, _ = session_ic(frame, "sentiment_rank", "fwd_return")
+
+    passes = lambda t: abs(t) >= SIGNIFICANCE_T
+
+    print("H3  coverage and forward volatility")
+    if passes(residual_t) and passes(within_t):
+        print("    Holds both cross-sectionally and within stocks. Surviving the")
+        print("    within-ticker control means this is not merely a statement that")
+        print("    widely covered names are volatile names: a given stock's busier")
+        print("    news day does carry information about its own next session.")
+    elif passes(residual_t):
+        print("    Holds cross-sectionally, fails within stocks. Coverage adds to")
+        print("    trailing volatility across names, but a stock's own busy day says")
+        print("    nothing about its own next session -- a risk characteristic, not a")
+        print("    timing signal.")
+    else:
+        print("    Does not hold once trailing volatility is controlled for.")
+
+    print("\nH4  sentiment and the timing of returns")
+    if passes(past_t) and abs(past_t) > abs(future_t):
+        print(f"    Holds. Sentiment tracks the move already made (t {past_t:+.2f})")
+        print(f"    more strongly than the one to come (t {future_t:+.2f}). Headlines")
+        print("    describe the present, which is the most likely explanation for the")
+        print("    null on direction.")
+    elif passes(future_t):
+        print("    Reverses: the forward relationship is the stronger one.")
+    else:
+        print("    Neither direction is distinguishable from noise at this threshold.")
 
 
 if __name__ == "__main__":

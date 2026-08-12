@@ -5,66 +5,81 @@ scores them with a finance-specific transformer model (**FinBERT**), aligns the
 resulting sentiment to tradable market sessions, and tests whether it predicts
 cross-sectional equity returns.
 
-Sentiment turns out not to predict direction. Two follow-up tests explain why, and
-find what the same data does relate to.
+Sentiment turns out not to predict direction. Follow-up tests explain why, and find
+what the same data does relate to.
 
 ---
 
 ## 📌 Findings
 
-Three results, from 37k scored headlines over 615 trading sessions.
+Five pre-registered hypotheses over **250,853 scored headlines** and **2,775 trading
+sessions** (2013–2024, 54 large-cap US equities), evaluated walk-forward.
 
-**1. Headline sentiment does not predict next-session relative returns.** Evaluated
-walk-forward with monthly refits over 365 out-of-sample sessions (2018–2020, 47
-large-cap US equities), mean information coefficient **−0.0146 (t = −1.33)**. Five
-pre-registered configurations were tested; all five are reported and none reaches
-the Bonferroni-corrected threshold of |t| ≥ 2.5. The sample could only have
-detected a mean IC above **0.027**, so this rules out a large effect rather than a
-small one.
+**1. Headline sentiment does not predict next-session relative returns.** The best
+configuration reaches mean IC **+0.0104 (t = +2.48)** against a Bonferroni-corrected
+threshold of 2.576, with a minimum detectable effect of 0.0107 — the estimate sits
+*at* the edge of what the sample can resolve. No configuration clears the bar.
 
 **2. Sentiment is contemporaneous with returns, not predictive of them** — which
-explains the first result. The same feature, the same sample:
+explains the first result. Same feature, same sample:
 
 | Sentiment correlated against | Mean IC | t |
 |---|---|---|
-| the return that already happened | +0.0255 | **+2.42** |
-| the next session's excess return | −0.0023 | −0.23 |
+| the return that already happened | +0.0238 | **+5.47** |
+| the next session's excess return | +0.0057 | +1.33 |
 
-Headlines report moves rather than anticipating them. By publication, the price has
-already moved.
+By the time a headline is published, the price has moved.
 
-**3. News coverage relates to forward volatility — cross-sectionally, not within a
-stock.** Coverage level predicts the *magnitude* of the next move beyond what
-trailing realized volatility explains (**t = +3.13** after control). But the
-within-ticker test is flat (t = −0.14), so this is a risk characteristic of widely
-covered names, **not a timing signal**.
+**3. News coverage predicts forward volatility, and it survives every control.**
+Not direction — *magnitude*.
 
-In short: the news says something about **risk** and almost nothing about
-**direction**.
+| Test | Corr | t |
+|---|---|---|
+| trailing volatility → \|next return\| *(baseline for scale)* | +0.2258 | +48.34 |
+| coverage → volatility residual *(vol controlled)* | +0.0232 | **+5.66** |
+| within-ticker coverage → within-ticker \|return\| | +0.0167 | **+4.50** |
+
+The within-ticker control is the strict one: it discards every between-stock
+difference, so this says a *given stock's* busier news day predicts *that stock's*
+next-session move. It measured −0.14, +3.62, then +4.50 as the sample grew from 615
+to 1,887 to 2,775 sessions — strengthening monotonically with n, with a stable
+effect size.
+
+**In short: the news says a lot about risk and almost nothing about direction.**
+
+### What growing the sample settled
+
+An earlier run on 1,887 sessions flagged one configuration as significant at
+t = +2.54. Adding 49% more data took it to **t = +2.05** with the effect shrinking
+from +0.0284 to +0.0192 — a fluke regressing, exactly as it should. Over the same
+expansion, H0's estimate held at +0.0103 → +0.0104 while its t rose +1.96 → +2.48,
+and H3's within-ticker control went from null to strongly significant.
+
+Growing the sample is what separated the three.
 
 ![Equity curve](equity_curve.png)
 
-The most instructive finding is the gap between the two evaluations. A
-dollar-neutral quintile long/short book returns **+7.8% annualized gross at
-Sharpe +0.50**, which looks like an edge. It is not one:
+A dollar-neutral quintile long/short book, rebalanced daily, over 2,507 sessions:
 
 | | Total | Annualized | Vol | Sharpe | Max DD |
 |---|---|---|---|---|---|
-| Long/short, gross | +11.5% | +7.8% | 18.3% | **+0.50** | −22.0% |
-| Long/short, net of 5bps | −39.6% | −29.4% | 18.3% | **−1.81** | −51.2% |
-| Equal-weight universe | +27.0% | +18.0% | 31.1% | +0.69 | −33.5% |
+| Long/short, gross | +183.5% | +11.0% | 16.5% | +0.72 | -22.8% |
+| Long/short, net of 5bps | -94.9% | -25.8% | 16.5% | **-1.73** | -95.7% |
+| Equal-weight universe | +340.0% | +16.1% | 19.1% | **+0.88** | -33.6% |
 
-- **The entire gross return is one quarter.** Q2 2020 contributes +18.0%; excluding
-  it the strategy returns **−4.7%**. Two of seven quarters are outright negative.
-- **Turnover is 3.36× capital per session**, implying a 42% annual cost drag. A
-  four-name-per-side book rebalanced daily rotates almost completely each day.
-- **Passively holding the universe beat it** — at a higher Sharpe than the
-  strategy's *gross* return.
+- **Passively holding the universe beats the strategy even before costs** - Sharpe
+  +0.88 against +0.72 gross. A small gross spread exists and is not worth having.
+- **Turnover is 3.20x capital per session**, a 40.3% annual cost drag. A
+  four-name-per-side book rebalanced daily rotates almost completely each day, and
+  costs consume several times the gross spread.
+- The return is *not* concentrated: 29 of 41 quarters positive, and excluding the
+  best quarter still leaves +94.9% of the +117.8% gross total. That is a persistent
+  small spread rather than one lucky episode - and still not tradable.
 
 The information coefficient weights every session equally; profit and loss weights
-by magnitude. That is why a handful of violent sessions produced an apparently
-positive backtest while the IC correctly reported nothing. Had only the backtest
-been built, this project would have reported a false positive.
+by magnitude. On an earlier, smaller sample the backtest showed Sharpe +0.50 gross
+that came entirely from a single quarter while the IC read zero. The IC was right.
+Had only the backtest been built, this project would have reported a false positive.
 
 ---
 
@@ -92,24 +107,27 @@ direct correlation tests in `relationships.py`, since neither needs a model. H5 
 
 | Configuration | Rows | Accuracy | Edge vs baseline | Mean IC | IC sessions | t |
 |---|---|---|---|---|---|---|
-| H0 level / 1-day | 9,046 | 48.9% | −2.5% | −0.0146 | 365 | −1.33 |
-| H1 surprise / 1-day | 8,868 | 49.9% | −1.4% | +0.0010 | 359 | +0.10 |
-| H2 level / 5-day | 9,046 | 49.9% | −1.4% | −0.0013 | 73 | −0.05 |
-| H1+H2 surprise / 5-day | 8,868 | 49.1% | −2.1% | +0.0120 | 72 | +0.45 |
-| aux combined / 1-day | 8,868 | 49.4% | −1.9% | −0.0124 | 359 | −1.08 |
+| H0 level / 1-day | 69,539 | 50.5% | −0.4% | +0.0104 | 2,510 | +2.48 |
+| H1 surprise / 1-day | 69,347 | 50.3% | −0.6% | −0.0044 | 2,504 | −1.08 |
+| H2 level / 5-day | 69,539 | 51.1% | +0.1% | +0.0192 | 502 | +2.05 |
+| H1+H2 surprise / 5-day | 69,347 | 50.3% | −0.7% | −0.0049 | 501 | −0.57 |
+| aux combined / 1-day | 69,347 | 50.3% | −0.6% | −0.0014 | 2,504 | −0.34 |
 
 **Minimum detectable mean IC** at each configuration's sample size:
 
 ```
-H0  level / 1-day        0.0274   (365 independent sessions)
-H1  surprise / 1-day     0.0266   (359 independent sessions)
-H2  level / 5-day        0.0714   ( 73 independent sessions)
+H0  level / 1-day        0.0107   (2,510 independent sessions)
+H1  surprise / 1-day     0.0104   (2,504 independent sessions)
+H2  level / 5-day        0.0241   (  502 independent sessions)
 ```
 
-H2's floor is high because the five-day IC series is strided by five sessions:
-consecutive five-day returns share four of their five days, so an uncorrected
-t-statistic would substantially overstate significance. H2 did not fail so much as
-lack the power to succeed.
+H2's floor is more than twice the others because the five-day IC series is strided
+by five sessions: consecutive five-day returns share four of their five days, so an
+uncorrected t-statistic would substantially overstate significance.
+
+The threshold is derived, not rounded. At five tests the exact two-sided Bonferroni
+value is 2.576, and an earlier version used a rounded 2.5 - which was the only
+reason a t of 2.54 once printed as significant.
 
 Testing stopped at five classifier configurations. Continuing until something
 cleared the threshold would have produced a number, not a finding. H3 to H5 below
@@ -119,26 +137,27 @@ that bounds it.
 ### H3 and H4, with controls
 
 ```
-H4  sentiment -> the return that already happened      IC +0.0255   t  +2.42
-    sentiment -> next session's excess return          IC -0.0023   t  -0.23
+H4  sentiment -> the return that already happened      IC +0.0238   t  +5.47
+    sentiment -> next session's excess return          IC +0.0057   t  +1.33
 
-H3  coverage level -> |next return| (uncontrolled)     IC +0.0469   t  +4.91
-    trailing volatility -> |next return|               IC +0.2130   t +19.28
-    coverage -> volatility residual (controlled)       IC +0.0281   t  +3.13
-    within-ticker coverage -> within-ticker |return|   rho -0.0012  t  -0.14
+H3  coverage level -> |next return| (uncontrolled)     IC +0.0483   t +11.63
+    trailing volatility -> |next return|               IC +0.2258   t +48.34
+    coverage -> volatility residual (controlled)       IC +0.0232   t  +5.66
+    within-ticker coverage -> within-ticker |return|   rho +0.0167  t  +4.50
 ```
 
 H3's uncontrolled figure overstates the effect roughly twofold. Volatility clusters,
 so anything correlated with a stock being volatile appears to forecast volatility;
-trailing realized vol alone reaches t = +19.28. Coverage survives that control at
-t = +3.13, but the within-ticker test — which discards every between-stock
-difference — is flat. Reporting both is the point: the effect is a cross-sectional
-risk characteristic, not a signal you could time.
+trailing realized vol alone reaches t = +48.34. Coverage survives that control at
+t = +5.66, and survives the within-ticker control at t = +4.50.
 
-This is the same trap caught earlier in the project, when raw `volume` and
-`headline_count` let the model identify the ticker rather than read the day. A
-feature that encodes stock identity will look predictive of anything that varies by
-stock.
+That second control is the strict one, and passing it is what makes H3 a finding
+rather than a restatement. It discards every between-stock difference, so it cannot
+be satisfied by "widely covered names are volatile names": a *given stock's* busier
+news day predicts *that stock's* next-session move.
+
+It is worth recording that this control read t = −0.14 on 615 sessions, +3.62 on
+1,887 and +4.50 on 2,775. The earlier null was a power problem, not an absence.
 
 ### H5, a model trained on this project's own data
 
@@ -147,24 +166,24 @@ skips the intermediate step: TF-IDF over headline text into a linear classifier,
 trained directly on whether the name beat the cross-section next session, evaluated
 through the same walk-forward harness.
 
-A linear model rather than a fine-tuned transformer, deliberately. At 43k short
+A linear model rather than a fine-tuned transformer, deliberately. At 307k short
 headlines carrying a signal four prior tests could not detect, 66M parameters would
 memorise the training set — and the token weights below are inspectable in a way
 transformer weights are not.
 
 ```
-FinBERT sentiment (H0)                  IC -0.0146   t -1.33
-TF-IDF on returns (H5), raw             IC +0.0231   t +1.90
-TF-IDF on returns (H5), controlled      IC +0.0096   t +0.83
+FinBERT sentiment (H0)                  IC +0.0104   t +2.48
+TF-IDF on returns (H5), raw             IC +0.0091   t +2.12
+TF-IDF on returns (H5), controlled      IC +0.0004   t +0.11
 
-share of score variance fixed per ticker:  13.7%
+share of score variance fixed per ticker:  8.1%
 ```
 
-The raw figure looks like an improvement and mostly is not. Headlines name the
-company they are about, so a bag-of-words model can learn *Tesla* and score every
-Tesla headline alike. The heaviest weights confirm it — `tesla +0.62`,
-`ford −0.74`, `oracle +0.47` — and demeaning each ticker's scores removes more than
-half the edge. Neither figure is significant; the controlled one is not close.
+Trained on 298,690 headlines, it matches FinBERT and no more. The control is
+decisive: demeaning each ticker's scores collapses the raw t of +2.12 to **+0.11**.
+Headlines name the company they describe, so a bag-of-words model learns *Tesla*
+and scores every Tesla headline alike — the heaviest weights are company names and
+date fragments, not language about the business.
 
 **This is the third distinct form the same failure took.** Raw volume let the
 classifier identify tickers; coverage predicted volatility between stocks but not
@@ -195,10 +214,10 @@ individually re-runnable. A stage that fails halfway leaves no partial state.
 | Stage | Module | Status |
 |---|---|---|
 | News ingestion | `scraper.py` | ✅ Scheduled hourly |
-| Historical backfill | `backfill_news.py` | ✅ 2018–2020, 35.5k headlines |
+| Historical backfill | `backfill_news.py` | ✅ 2013–2024, 213k headlines |
 | Persistence layer | `database.py`, `schema.sql` | ✅ |
-| Sentiment scoring | `sentiment_analyzer.py` | ✅ 37.2k headlines scored |
-| Feature construction | `build_features.py` | ✅ 13.5k ticker-days |
+| Sentiment scoring | `sentiment_analyzer.py` | ✅ 250.9k headlines scored |
+| Feature construction | `build_features.py` | ✅ 73.3k ticker-days |
 | Model & evaluation | `alpha_engine.py`, `walkforward.py` | ✅ |
 | Direction tests (H0-H2) | `experiments.py` | ✅ 5 configurations |
 | Relationship tests (H3-H4) | `relationships.py` | ✅ with controls |
@@ -206,8 +225,8 @@ individually re-runnable. A stage that fails halfway leaves no partial state.
 | Backtest | `backtest.py` | ✅ |
 | Dashboard | `app.py` | ✅ |
 
-**Current data:** 37,368 articles · 37,238 scored · 143,241 price bars
-(2016–2026) · 57 tickers · 649 sessions.
+**Current data:** 251,237 articles · 250,853 scored · 214,404 price bars
+(2011–2026) · 57 tickers · 2,884 sessions · 73,267 feature rows.
 
 ---
 
@@ -322,7 +341,7 @@ pip install -r requirements.txt
 ```
 python database.py             # create the database (idempotent)
 python scraper.py              # collect current headlines
-python backfill_news.py        # stream 2018-2020 history from FNSPID
+python backfill_news.py nasdaq --start 2013-01-01   # stream history from FNSPID
 python sentiment_analyzer.py   # score everything unscored
 python build_features.py       # ingest prices, rebuild the feature matrix
 python walkforward.py          # walk-forward evaluation
@@ -371,21 +390,28 @@ Stated plainly, because each one bounds the conclusion above.
    to the close is unknowable, so they are attributed to the *following* session —
    the only assumption that cannot leak. It is deliberately conservative: a genuine
    same-session effect is shifted a day later and therefore understated.
-2. **The historical universe is sector-skewed.** Of 57 tickers, 41 have more than
-   100 historical articles, but industrials are covered 1 of 6. The cross-section
-   leans toward technology, financials and healthcare.
+2. **Universe coverage is uneven.** 54 of 57 tickers appear in the study. The
+   nasdaq backfill substantially repaired an earlier sector skew — industrials went
+   from 1 of 6 covered to 4 of 6 — but coverage still varies by name, and the
+   cross-section width ranges from 29 to 53 names across the sample.
 3. **Headlines only, no article bodies.** Sentiment is inferred from titles.
 4. **FinBERT is used off the shelf**, not fine-tuned on this corpus.
-5. **A six-year gap** separates the backfill (ends June 2020) from live collection
-   (began July 2026). The study is fitted on the historical block; the live period
-   is reserved as an untouched forward test and is currently too short to serve as
-   one.
-6. **One model class, one feature family.** XGBoost with fixed hyperparameters; no
-   ensembles, no alternative classifiers.
-7. **Costs are a flat 5bps per side.** No market impact, no borrow cost on shorts,
+5. **A two-year gap** separates the backfill (ends January 2024) from live
+   collection (began July 2026). The study is fitted on the historical block; the
+   live period is reserved as an untouched forward test and is currently too short
+   to serve as one.
+
+6. **News density rises sixfold across the sample**, from 1.05 articles per
+   ticker-day in 2013 to 6.19 in 2023. The rank features are within-session
+   percentiles and the surprise features use each ticker's own trailing baseline, so
+   both are insensitive to that trend — but an IC computed across 29 names is
+   noisier than one across 53.
+7. **Two model classes.** XGBoost with fixed hyperparameters, plus a TF-IDF linear
+   model; no ensembles, no fine-tuned transformer.
+8. **Costs are a flat 5bps per side.** No market impact, no borrow cost on shorts,
    no slippage modelling. The 42% annual drag is a consequence of daily rebalancing
-   specifically; a weekly book would cost roughly a fifth as much, though with
-   gross at −4.7% excluding one quarter that would only lose more slowly.
+   specifically; a weekly book would cost roughly a fifth as much, which would not
+   be enough to lift a gross Sharpe of 0.72 above a passive 0.88.
 
 ---
 
@@ -393,7 +419,9 @@ Stated plainly, because each one bounds the conclusion above.
 
 Historical headlines are from **FNSPID** (Financial News and Stock Price
 Integration Dataset), licensed **CC BY-NC-4.0** — non-commercial use with
-attribution.
+attribution. Two exports are used: `All_external.csv` (2009–2020, headlines only)
+and `nasdaq_exteral_data.csv` (2007–2024, with article bodies), both streamed and
+filtered rather than downloaded whole.
 
 > Dong, Z., Fan, X., & Peng, Z. (2024). *FNSPID: A Comprehensive Financial News
 > Dataset in Time Series.* [arXiv:2402.06698](https://arxiv.org/abs/2402.06698) ·

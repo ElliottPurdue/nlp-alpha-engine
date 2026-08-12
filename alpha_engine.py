@@ -34,10 +34,14 @@ TARGET = "target_relative"
 
 TEST_FRACTION = 0.2
 
-# The backfill ends mid-2020 and live collection began in 2026. Fitting across that
-# gap trains on one era and tests on another, so development uses the contiguous
-# historical block and the live period is held back as an untouched forward test.
-MODEL_PERIOD_END = "2020-06-30"
+# End of the contiguous historical block. Live collection began in 2026, and
+# fitting across that gap would train on one era and test on another, so the live
+# period is held back as an untouched forward test.
+#
+# This tracked the backfill's end and has to be moved whenever the backfill is
+# extended. Left at 2020-06-30 after the corpus reached 2024 it silently discarded
+# 888 sessions -- half the sample -- without erroring.
+MODEL_PERIOD_END = "2024-01-10"
 
 # Below this many rows, evaluation is sampling noise and is reported only to show
 # the pipeline runs.

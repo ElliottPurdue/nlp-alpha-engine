@@ -43,9 +43,10 @@ LIVE_PERIOD_START = "2026-01-01"
 
 ROLLING_WINDOW = 7
 
-# FNSPID covers JPM on 68% of historical sessions against AAPL's 10%, so it opens on
-# a dense series rather than a near-empty one.
-DEFAULT_CHART_TICKER = "JPM"
+# Coverage varies widely by name over the 2013-2024 backfill: NVDA appears on 56% of
+# sessions against JPM's 15%, whose articles concentrate in 2018-2020. Opening on a
+# dense series avoids a near-empty first impression.
+DEFAULT_CHART_TICKER = "NVDA"
 
 st.set_page_config(page_title="NLP Alpha Engine", page_icon="📈", layout="wide")
 
@@ -143,7 +144,7 @@ def load_ticker_series(ticker, start, end):
 
     Driven from `prices` so the price line stays continuous through sessions with no
     news. Bounded at both ends because sentiment exists in two disjoint blocks and an
-    open window would stretch the chart across the six-year gap between them.
+    open window would stretch the chart across the gap between them.
     """
     with db.connect(read_only=True) as conn:
         frame = pd.read_sql_query(
@@ -331,7 +332,7 @@ def render_sentiment_vs_price():
     # dense and opens by default; live collection is a fortnight old and fills in as
     # the scheduled scrape keeps running.
     periods = {
-        "Historical backfill (2018-2020)": ("2018-01-01", "2020-06-30"),
+        "Historical backfill (2013-2024)": ("2013-01-01", "2024-01-10"),
         "Live collection": (live_window_start(), "2100-01-01"),
     }
     label = st.radio("Period", list(periods), horizontal=True)
@@ -380,7 +381,7 @@ def render_pipeline():
         width="stretch",
     )
     st.caption(
-        "The gap is real: the FNSPID backfill ends June 2020 and live collection "
+        "The gap is real: the FNSPID backfill ends January 2024 and live collection "
         "began in 2026. The two blocks come from different sources with different "
         "coverage, so the study is fitted on the historical block and the live "
         "period is reserved as an untouched forward test."
@@ -420,24 +421,24 @@ def render_research():
     st.markdown(
         """
         **No detectable signal.** Evaluated walk-forward with monthly refits over
-        365 out-of-sample sessions (2018–2020, 47 large-cap US equities), the mean
-        information coefficient is **−0.015 with t = −1.33**. Five pre-registered
-        configurations were tested and all five are reported; none reaches the
-        Bonferroni-corrected threshold of |t| ≥ 2.5.
+        2,510 out-of-sample sessions (2013–2024, 54 large-cap US equities), the best
+        configuration reaches mean IC **+0.0104 with t = +2.48**, against an exact
+        Bonferroni-corrected threshold of 2.576. Five pre-registered configurations
+        were tested and all five are reported; none clears the bar.
 
-        The sample could only have detected a mean IC above **0.027**. Published
-        daily equity news signals typically run 0.01–0.03, so this rules out a
-        large effect, not a small one.
+        The sample can resolve a mean IC of **0.0107**, and the estimate sits right
+        at that floor. Published daily equity news signals run 0.01–0.03, so this
+        now rules out most of that range rather than only its top.
         """
     )
 
     st.dataframe(
         pd.DataFrame([
-            ("H0  level / 1-day", 9046, "48.9%", "-2.5%", -0.0146, 365, -1.33),
-            ("H1  surprise / 1-day", 8868, "49.9%", "-1.4%", 0.0010, 359, 0.10),
-            ("H2  level / 5-day", 9046, "49.9%", "-1.4%", -0.0013, 73, -0.05),
-            ("H1+H2  surprise / 5-day", 8868, "49.1%", "-2.1%", 0.0120, 72, 0.45),
-            ("aux  combined / 1-day", 8868, "49.4%", "-1.9%", -0.0124, 359, -1.08),
+            ("H0  level / 1-day", 69539, "50.5%", "-0.4%", 0.0104, 2510, 2.48),
+            ("H1  surprise / 1-day", 69347, "50.3%", "-0.6%", -0.0044, 2504, -1.08),
+            ("H2  level / 5-day", 69539, "51.1%", "+0.1%", 0.0192, 502, 2.05),
+            ("H1+H2  surprise / 5-day", 69347, "50.3%", "-0.7%", -0.0049, 501, -0.57),
+            ("aux  combined / 1-day", 69347, "50.3%", "-0.6%", -0.0014, 2504, -0.34),
         ], columns=["configuration", "rows", "accuracy", "edge vs baseline",
                     "mean IC", "IC sessions", "t"]),
         hide_index=True, width="stretch",
@@ -452,8 +453,8 @@ def render_research():
 
         | Sentiment correlated against | Mean IC | t |
         |---|---|---|
-        | the return that already happened | +0.0255 | **+2.42** |
-        | the next session's excess return | −0.0023 | −0.23 |
+        | the return that already happened | +0.0238 | **+5.47** |
+        | the next session's excess return | +0.0057 | +1.33 |
 
         That pair is the explanation for the null. Headlines report moves rather
         than anticipating them, which is a mechanical consequence of how they are
@@ -470,10 +471,11 @@ def render_research():
 
         The uncontrolled figure overstates it: volatility clusters, so anything
         correlated with a stock being volatile looks predictive. It survives that
-        control at t = +3.13, but the within-ticker test is flat. So coverage is a
-        **cross-sectional risk characteristic** — widely covered names are riskier
-        names — and **not a timing signal**. A given stock's busy news day says
-        nothing about that stock's next session.
+        control at t = +5.66, **and survives the within-ticker control at +4.50** —
+        the strict test, which discards every between-stock difference. So a *given
+        stock's* busier news day predicts *that stock's* next-session move. This
+        control read −0.14 on 615 sessions and +4.50 on 2,775: the earlier null was
+        a power problem, not an absence.
         """
     )
 

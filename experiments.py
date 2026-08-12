@@ -11,9 +11,15 @@ is an experiment; running forty and reporting the best is a story about noise.
     H2  One day is too short. Daily returns are mostly microstructure noise; five
         days gives a real effect room to show up.
 
-With five configurations the usual |t| > 2 bar is too loose, so verdicts use a
-Bonferroni-corrected |t| > 2.5.
+With five configurations the usual |t| > 2 bar is too loose, so verdicts use an
+exact two-sided Bonferroni critical value, 2.576 at this count.
+
+A result that only clears the bar on the least powerful configuration, at an effect
+size equal to that configuration's minimum detectable effect, is reported as what
+it is: at the edge of what the sample can distinguish from noise.
 """
+
+from scipy import stats
 
 from alpha_engine import FEATURE_SETS
 from walkforward import summarize, walk_forward
@@ -28,7 +34,11 @@ HYPOTHESES = [
     ("aux  combined / 1-day", "combined", "target_relative", "excess_return", 1),
 ]
 
-SIGNIFICANCE_T = 2.5
+# Two-sided Bonferroni critical value, derived rather than rounded. At five tests
+# this is 2.576, and the difference from a rounded 2.5 is not academic: a result at
+# t = 2.54 reads as significant against one and not against the other.
+FAMILY_ALPHA = 0.05
+SIGNIFICANCE_T = stats.norm.ppf(1 - FAMILY_ALPHA / (2 * len(HYPOTHESES)))
 
 
 def run():
