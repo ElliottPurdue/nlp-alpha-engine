@@ -277,7 +277,7 @@ def render_today():
     sectors["avg_net"] = sectors["weighted"] / sectors["articles"]
     st.altair_chart(
         _diverging_bars(sectors, "avg_net", "sector", "By sector", 260),
-        use_container_width=True,
+        width="stretch",
     )
 
     extremes = st.slider("Stocks to show at each end", 5, 25, 10)
@@ -289,7 +289,7 @@ def render_today():
         _diverging_bars(ranked, "avg_net", "ticker",
                         f"Most positive and most negative {extremes}",
                         max(300, 22 * len(ranked))),
-        use_container_width=True,
+        width="stretch",
     )
 
     with st.expander("All tickers, as a table"):
@@ -297,7 +297,7 @@ def render_today():
             ["ticker", "sector", "articles", "positive", "negative", "avg_net"]
         ]
         st.dataframe(table.round({"avg_net": 3}), hide_index=True,
-                     use_container_width=True)
+                     width="stretch")
 
 
 def render_live_feed():
@@ -358,7 +358,7 @@ def render_sentiment_vs_price():
     st.altair_chart(
         alt.layer(price_line, sentiment_line).resolve_scale(y="independent")
         .properties(height=420),
-        use_container_width=True,
+        width="stretch",
     )
     st.caption(
         f"Blue: close price (left axis). Red: {ROLLING_WINDOW}-day rolling mean "
@@ -377,7 +377,7 @@ def render_pipeline():
             y=alt.Y("articles:Q", title="Articles"),
             tooltip=["session_date:T", "articles:Q"],
         ).properties(height=260),
-        use_container_width=True,
+        width="stretch",
     )
     st.caption(
         "The gap is real: the FNSPID backfill ends June 2020 and live collection "
@@ -440,7 +440,7 @@ def render_research():
             ("aux  combined / 1-day", 8868, "49.4%", "-1.9%", -0.0124, 359, -1.08),
         ], columns=["configuration", "rows", "accuracy", "edge vs baseline",
                     "mean IC", "IC sessions", "t"]),
-        hide_index=True, use_container_width=True,
+        hide_index=True, width="stretch",
     )
 
     st.divider()
@@ -510,7 +510,7 @@ def render_research():
     st.subheader("Why the backtest is more misleading than the IC")
     curve = Path(__file__).resolve().parent / "equity_curve.png"
     if curve.exists():
-        st.image(str(curve), use_container_width=True)
+        st.image(str(curve), width="stretch")
     else:
         st.info("Run backtest.py to generate equity_curve.png.")
 

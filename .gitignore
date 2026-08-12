@@ -10,3 +10,6 @@ __pycache__/
 
 # Scheduled task output
 pipeline.log
+
+# Claude Code local tooling
+.claude/
