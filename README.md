@@ -206,6 +206,7 @@ relationships.py       H3-H4: what does the same data relate to?
 text_model.py          H5: TF-IDF model trained on returns, not tone
 backtest.py            predictions ───────▶ equity curve, cost analysis
 app.py                 Streamlit dashboard
+tests/                 62 tests, mutation-checked
 ```
 
 Every stage reads from and writes to SQLite, so stages are independent and
@@ -226,8 +227,12 @@ individually re-runnable. A stage that fails halfway leaves no partial state.
 | Dashboard | `app.py` | ✅ |
 | Tests | `tests/` | ✅ 62 tests, mutation-checked |
 
-**Current data:** 251,237 articles · 250,853 scored · 214,404 price bars
-(2011–2026) · 57 tickers · 2,884 sessions · 73,267 feature rows.
+**Study sample (fixed):** 2,775 sessions · 54 tickers · 72,965 feature rows,
+spanning 2013-01-01 to 2024-01-10.
+
+**Collection to date (growing hourly):** ~251k articles across ~2,885 sessions and
+57 tickers, against 214,404 price bars covering 2011–2026. The scraper runs on a
+schedule, so these move; the study sample above does not.
 
 ---
 
