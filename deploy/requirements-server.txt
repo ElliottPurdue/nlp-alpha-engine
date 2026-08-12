@@ -1,0 +1,12 @@
+# Collection host only: scraping and the SQLite layer, nothing else.
+#
+# Deliberately excludes torch, transformers, xgboost, scikit-learn, yfinance,
+# streamlit and pandas. Those belong on the research machine. Installed here they
+# would need roughly 3 GB against 3.3 GB free, and FinBERT inference would
+# compete for the single CPU core that the trading processes depend on.
+#
+# Total footprint of the list below is about 20 MB.
+
+requests==2.34.2
+beautifulsoup4==4.15.0
+lxml==6.1.1

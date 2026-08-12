@@ -11,5 +11,10 @@ __pycache__/
 # Scheduled task output
 pipeline.log
 
-# Claude Code local tooling
+# Editor and local tooling config
+.vscode/
+.idea/
 .claude/
+*.swp
+Thumbs.db
+.DS_Store

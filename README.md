@@ -362,6 +362,13 @@ python inspect_db.py           # summary of database contents
 python -m streamlit run app.py
 ```
 
+### Optional: collection on a server
+
+`deploy/` documents running the scraper on an always-on host, with
+`export_articles.py` and `import_articles.py` moving articles back for scoring.
+Not required to reproduce anything here; the study was completed with collection
+running locally on a schedule.
+
 ### Tests
 
 ```
