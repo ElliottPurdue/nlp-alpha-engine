@@ -224,6 +224,7 @@ individually re-runnable. A stage that fails halfway leaves no partial state.
 | Own model (H5) | `text_model.py` | ✅ TF-IDF on returns |
 | Backtest | `backtest.py` | ✅ |
 | Dashboard | `app.py` | ✅ |
+| Tests | `tests/` | ✅ 62 tests, mutation-checked |
 
 **Current data:** 251,237 articles · 250,853 scored · 214,404 price bars
 (2011–2026) · 57 tickers · 2,884 sessions · 73,267 feature rows.
@@ -355,6 +356,22 @@ python inspect_db.py           # summary of database contents
 ```
 python -m streamlit run app.py
 ```
+
+### Tests
+
+```
+python -m unittest discover -s tests -t .
+```
+
+62 tests, no dependency beyond the pipeline's own. Coverage is deliberately uneven:
+it concentrates on the places where a mistake would not raise, would not look wrong,
+and would quietly invalidate every reported number — trading-session attribution
+including the daylight-saving shift, the causality of the surprise baselines, the
+article dedup key, the holiday roll, and the walk-forward train/test boundary.
+
+The suite is mutation-checked. Removing the `shift(1)` that keeps the surprise
+baseline causal, moving the market close, reversing the calendar roll, or dropping
+URL normalization each cause failures rather than passing silently.
 
 Scoring is decoupled from collection by an anti-join, so a backlog of any size can
 be cleared in a single pass whenever convenient, and an interrupted pass resumes
