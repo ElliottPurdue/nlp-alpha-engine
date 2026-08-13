@@ -14,7 +14,6 @@ pipeline.log
 # Editor and local tooling config
 .vscode/
 .idea/
-.claude/
 *.swp
 Thumbs.db
 .DS_Store
