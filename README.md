@@ -17,10 +17,10 @@ sessions** (2013–2024, 54 large-cap US equities), evaluated walk-forward.
 
 **1. Headline sentiment does not predict next-session relative returns.** The best
 configuration reaches mean IC **+0.0104 (t = +2.48)** against a Bonferroni-corrected
-threshold of 2.576, with a minimum detectable effect of 0.0107 — the estimate sits
+threshold of 2.576, with a minimum detectable effect of 0.0107. The estimate sits
 *at* the edge of what the sample can resolve. No configuration clears the bar.
 
-**2. Sentiment is contemporaneous with returns, not predictive of them** — which
+**2. Sentiment is contemporaneous with returns, not predictive of them.** This
 explains the first result. Same feature, same sample:
 
 | Sentiment correlated against | Mean IC | t |
@@ -31,7 +31,7 @@ explains the first result. Same feature, same sample:
 By the time a headline is published, the price has moved.
 
 **3. News coverage predicts forward volatility, and it survives every control.**
-Not direction — *magnitude*.
+Not direction. *Magnitude*.
 
 | Test | Corr | t |
 |---|---|---|
@@ -42,7 +42,7 @@ Not direction — *magnitude*.
 The within-ticker control is the strict one: it discards every between-stock
 difference, so this says a *given stock's* busier news day predicts *that stock's*
 next-session move. It measured −0.14, +3.62, then +4.50 as the sample grew from 615
-to 1,887 to 2,775 sessions — strengthening monotonically with n, with a stable
+to 1,887 to 2,775 sessions, strengthening monotonically with n at a stable
 effect size.
 
 **In short: the news says a lot about risk and almost nothing about direction.**
@@ -51,7 +51,7 @@ effect size.
 
 An earlier run on 1,887 sessions flagged one configuration as significant at
 t = +2.54. Adding 49% more data took it to **t = +2.05** with the effect shrinking
-from +0.0284 to +0.0192 — a fluke regressing, exactly as it should. Over the same
+from +0.0284 to +0.0192, a fluke regressing exactly as it should. Over the same
 expansion, H0's estimate held at +0.0103 → +0.0104 while its t rose +1.96 → +2.48,
 and H3's within-ticker control went from null to strongly significant.
 
@@ -88,16 +88,16 @@ Had only the backtest been built, this project would have reported a false posit
 Every hypothesis was stated before its result was computed, and every configuration
 is reported regardless of outcome.
 
-- **H1 — surprise beats level.** Cross-sectional ranks describe how a stock's news
+- **H1: surprise beats level.** Cross-sectional ranks describe how a stock's news
   compares with its peers but cannot express how it compares with the stock's own
   normal. The literature associates returns with *abnormal* attention and tone.
-- **H2 — one day is too short.** Daily returns are dominated by microstructure
+- **H2: one day is too short.** Daily returns are dominated by microstructure
   noise; five days gives any genuine effect room to surface.
-- **H3 — coverage relates to volatility.** Attention and volatility are linked in
+- **H3: coverage relates to volatility.** Attention and volatility are linked in
   the literature, and magnitude is far more forecastable than sign.
-- **H4 — sentiment is contemporaneous.** If a headline describes a move that has
-  already happened, it cannot forecast the next one — which would explain H0–H2.
-- **H5 — a model trained on returns beats one trained on tone.** FinBERT optimises
+- **H4: sentiment is contemporaneous.** If a headline describes a move that has
+  already happened, it cannot forecast the next one, which would explain H0–H2.
+- **H5: a model trained on returns beats one trained on tone.** FinBERT optimises
   for sentiment, which H4 shows is contemporaneous. Training directly on the label
   that is actually wanted should do better, if anything is there.
 
@@ -168,7 +168,7 @@ through the same walk-forward harness.
 
 A linear model rather than a fine-tuned transformer, deliberately. At 307k short
 headlines carrying a signal four prior tests could not detect, 66M parameters would
-memorise the training set — and the token weights below are inspectable in a way
+memorise the training set, and the token weights below are inspectable in a way
 transformer weights are not.
 
 ```
@@ -182,7 +182,7 @@ share of score variance fixed per ticker:  8.1%
 Trained on 298,690 headlines, it matches FinBERT and no more. The control is
 decisive: demeaning each ticker's scores collapses the raw t of +2.12 to **+0.11**.
 Headlines name the company they describe, so a bag-of-words model learns *Tesla*
-and scores every Tesla headline alike — the heaviest weights are company names and
+and scores every Tesla headline alike. The heaviest weights are company names and
 date fragments, not language about the business.
 
 **This is the third distinct form the same failure took.** Raw volume let the
@@ -245,7 +245,7 @@ way of arriving at a wrong answer.
 
 A headline published after the 16:00 ET close cannot inform a position entered at
 that close. Attributing it to the session that just ended trains the model on
-information that did not exist when the trade would have been placed — a lookahead
+information that did not exist when the trade would have been placed, a lookahead
 bias that inflates results while remaining invisible in every accuracy metric.
 
 Each article stores both the raw UTC publication timestamp and a derived
@@ -259,8 +259,8 @@ different execution assumption is a feature rebuild rather than a data migration
 ### Articles are deduplicated, not ticker-headline pairs
 
 The same article is frequently syndicated across several ticker feeds. Articles are
-keyed by a SHA-256 hash of their canonicalized URL — query strings and tracking
-parameters stripped — with a junction table mapping them to tickers, so each
+keyed by a SHA-256 hash of their canonicalized URL, with query strings and tracking
+parameters stripped, plus a junction table mapping them to tickers, so each
 headline is scored exactly once regardless of how many feeds carried it.
 
 ### Features are cross-sectionally normalized
@@ -271,7 +271,7 @@ version of the model keyed on exactly that. Features are within-session percenti
 ranks.
 
 `sentiment_surprise` and `attention_surprise` measure each observation against the
-ticker's own trailing baseline, computed from strictly prior observations —
+ticker's own trailing baseline, computed from strictly prior observations, using
 `shift(1)` before the rolling window, without which each row would be compared
 against a baseline containing itself.
 
@@ -285,7 +285,7 @@ could plausibly explain.
 ### Evaluation is walk-forward, not a single split
 
 The corpus ends June 2020, so any single chronological 80/20 split places the COVID
-crash in the test set — permanently, regardless of features. Walk-forward refits
+crash in the test set, permanently and regardless of features. Walk-forward refits
 monthly on an expanding window and scores each subsequent out-of-sample window,
 giving 18 windows across calm markets, the Q4 2018 selloff, the crash and the
 recovery. The worst windows turned out to be **August and September 2019**, both
@@ -377,7 +377,7 @@ python -m unittest discover -s tests -t .
 
 62 tests, no dependency beyond the pipeline's own. Coverage is deliberately uneven:
 it concentrates on the places where a mistake would not raise, would not look wrong,
-and would quietly invalidate every reported number — trading-session attribution
+and would quietly invalidate every reported number: trading-session attribution
 including the daylight-saving shift, the causality of the surprise baselines, the
 article dedup key, the holiday roll, and the walk-forward train/test boundary.
 
@@ -416,12 +416,12 @@ indefinitely while collecting no data.
 Stated plainly, because each one bounds the conclusion above.
 
 1. **96.8% of FNSPID records carry no intraday timestamp.** Their position relative
-   to the close is unknowable, so they are attributed to the *following* session —
+   to the close is unknowable, so they are attributed to the *following* session,
    the only assumption that cannot leak. It is deliberately conservative: a genuine
    same-session effect is shifted a day later and therefore understated.
 2. **Universe coverage is uneven.** 54 of 57 tickers appear in the study. The
-   nasdaq backfill substantially repaired an earlier sector skew — industrials went
-   from 1 of 6 covered to 4 of 6 — but coverage still varies by name, and the
+   nasdaq backfill substantially repaired an earlier sector skew (industrials went
+   from 1 of 6 covered to 4 of 6), but coverage still varies by name, and the
    cross-section width ranges from 29 to 53 names across the sample.
 3. **Headlines only, no article bodies.** Sentiment is inferred from titles.
 4. **FinBERT is used off the shelf**, not fine-tuned on this corpus.
@@ -433,7 +433,7 @@ Stated plainly, because each one bounds the conclusion above.
 6. **News density rises sixfold across the sample**, from 1.05 articles per
    ticker-day in 2013 to 6.19 in 2023. The rank features are within-session
    percentiles and the surprise features use each ticker's own trailing baseline, so
-   both are insensitive to that trend — but an IC computed across 29 names is
+   both are insensitive to that trend, but an IC computed across 29 names is
    noisier than one across 53.
 7. **Two model classes.** XGBoost with fixed hyperparameters, plus a TF-IDF linear
    model; no ensembles, no fine-tuned transformer.
@@ -447,7 +447,7 @@ Stated plainly, because each one bounds the conclusion above.
 ## 📚 Data attribution
 
 Historical headlines are from **FNSPID** (Financial News and Stock Price
-Integration Dataset), licensed **CC BY-NC-4.0** — non-commercial use with
+Integration Dataset), licensed **CC BY-NC-4.0**, meaning non-commercial use with
 attribution. Two exports are used: `All_external.csv` (2009–2020, headlines only)
 and `nasdaq_exteral_data.csv` (2007–2024, with article bodies), both streamed and
 filtered rather than downloaded whole.
