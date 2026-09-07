@@ -1,0 +1,113 @@
+# The database is gitignored, so nothing here runs against the collected corpus.
+# That is the point: every test builds its own SQLite file in a temp directory
+# and tears it down, which is why the suite is evidence about the code rather
+# than about one machine's data. A test that needed the real database would only
+# ever pass here by accident.
+
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: test suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The suite reaches database, walkforward and build_features, which pull
+      # in numpy, pandas, scikit-learn, xgboost and yfinance between them. It
+      # never touches FinBERT, Streamlit or matplotlib, so installing torch and
+      # transformers here would add several minutes and a CUDA-sized download to
+      # prove nothing the tests exercise.
+      #
+      # The versions are read out of requirements.txt instead of being repeated,
+      # and a package that vanishes from there fails this step rather than
+      # quietly installing whatever pip finds newest. That keeps the pinned
+      # environment and the tested environment from drifting apart, which is the
+      # usual way a subset like this rots.
+      - name: Resolve the test dependencies from the pins
+        run: |
+          python - <<'PYEOF'
+          import re, sys
+
+          needed = ["numpy", "pandas", "scikit-learn", "xgboost", "yfinance"]
+          pins = {}
+          for line in open("requirements.txt", encoding="utf-8"):
+              line = line.split("#", 1)[0].strip()
+              m = re.match(r"^([A-Za-z0-9._-]+)==([^\s]+)$", line)
+              if m:
+                  pins[m.group(1).lower()] = m.group(0)
+
+          missing = [n for n in needed if n not in pins]
+          if missing:
+              sys.exit("not pinned in requirements.txt: " + ", ".join(missing))
+
+          resolved = [pins[n] for n in needed]
+          print("\n".join(resolved))
+          open("requirements-ci.txt", "w", encoding="utf-8").write(
+              "\n".join(resolved) + "\n")
+          PYEOF
+
+      - name: Install
+        run: pip install -r requirements-ci.txt
+
+      - name: Report the environment
+        run: |
+          python - <<'PYEOF'
+          import numpy, pandas, sklearn, xgboost, yfinance
+          for m in (numpy, pandas, sklearn, xgboost, yfinance):
+              print(m.__name__, m.__version__)
+          PYEOF
+
+      # -t . so the modules under test import as top-level names, the same way
+      # they do when the pipeline runs.
+      - name: Run the suite
+        run: python -m unittest discover -s tests -t . -v
+
+  schema:
+    name: schema applies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # schema.sql leans on STRICT tables, generated columns and foreign keys,
+      # all of which have a version floor and none of which announce themselves
+      # if the build of SQLite underneath does not support them. Applying it to
+      # an empty file is a two-second check that the schema is valid on a
+      # machine that is not this one, and it fails on the CREATE rather than on
+      # some later insert.
+      - name: Apply the schema to an empty database
+        run: |
+          python - <<'PYEOF'
+          import sqlite3, tempfile, pathlib
+
+          print("sqlite", sqlite3.sqlite_version)
+          sql = pathlib.Path("schema.sql").read_text(encoding="utf-8")
+
+          with tempfile.TemporaryDirectory() as tmp:
+              con = sqlite3.connect(pathlib.Path(tmp, "check.db"))
+              con.executescript(sql)
+              rows = con.execute(
+                  "select type, name from sqlite_master"
+                  " where name not like 'sqlite_%' order by type, name"
+              ).fetchall()
+              con.close()
+
+          for kind, name in rows:
+              print(kind, name)
+          if not any(kind == "table" for kind, _ in rows):
+              raise SystemExit("schema.sql created no tables")
+          PYEOF

@@ -1,5 +1,7 @@
 # NLP-Driven Financial Sentiment & Alpha Engine
 
+[![tests](https://github.com/ElliottPurdue/nlp-alpha-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/ElliottPurdue/nlp-alpha-engine/actions/workflows/ci.yml)
+
 An end-to-end quantitative research pipeline that collects financial news headlines,
 scores them with a finance-specific transformer model (**FinBERT**), aligns the
 resulting sentiment to tradable market sessions, and tests whether it predicts
