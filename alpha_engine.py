@@ -9,8 +9,8 @@ explain.
 Accuracy is always reported next to the majority-class baseline. On its own it
 means nothing.
 
-For a fair evaluation use walkforward.py; the single split here permanently lands
-its test window on the COVID crash, because the corpus ends in June 2020.
+For a fair evaluation use walkforward.py; the single split here tests only on
+February 2022 to January 2024, one stretch of market history.
 """
 
 import pandas as pd

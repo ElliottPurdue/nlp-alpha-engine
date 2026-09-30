@@ -286,12 +286,17 @@ could plausibly explain.
 
 ### Evaluation is walk-forward, not a single split
 
-The corpus ends June 2020, so any single chronological 80/20 split places the COVID
-crash in the test set, permanently and regardless of features. Walk-forward refits
-monthly on an expanding window and scores each subsequent out-of-sample window,
-giving 18 windows across calm markets, the Q4 2018 selloff, the crash and the
-recovery. The worst windows turned out to be **August and September 2019**, both
-unremarkable months, which ruled out a regime-specific explanation.
+A single chronological split gives one verdict from one stretch of market history:
+the 80/20 split in `alpha_engine.py` tests only on February 2022 to January 2024,
+permanently and regardless of features. Walk-forward trains on the first 250
+sessions, refits every 21 sessions on an expanding window, and scores each
+subsequent out-of-sample window, giving 121 windows from December 2013 to January
+2024 across calm markets, the Q4 2018 selloff, the COVID crash and the 2022 bear
+market. Stress periods did not consistently line up with weak windows. Accuracy edge
+over the majority-class baseline averaged −1.5 points across the 120 full-size
+windows, −3.6 over the three Q4 2018 windows, +0.7 over the three COVID-crash windows
+and −1.8 over the 2022 bear market, so no single market regime explains the weak
+ones. The worst single window was **July 2015**, at −10.6.
 
 ---
 

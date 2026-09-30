@@ -1,9 +1,10 @@
 """Walk-forward evaluation.
 
-A single split gives one verdict from one regime, and since the corpus ends in June
-2020 that split always lands on the COVID crash. Refitting monthly and scoring each
-following window instead gives eighteen windows across calm markets, the Q4 2018
-selloff, the crash and the recovery. It also produces exactly what a backtest needs.
+A single split gives one verdict from one stretch of market history: the 80/20
+split in alpha_engine.py tests only on February 2022 to January 2024. Refitting
+monthly and scoring each following window instead gives 121 windows from December
+2013 to January 2024, across calm markets, the Q4 2018 selloff, the COVID crash and
+the 2022 bear market. It also produces exactly what a backtest needs.
 
 Accuracy is reported next to the information coefficient, the per-session rank
 correlation between score and realized excess return. The IC is the more useful
